@@ -17,14 +17,14 @@ Certain plugins, like the AI Image plugin, require API credentials to function. 
     ```
 4. Save the file and exit the editor
 
-## Open AI Key
+## OpenAI Key
 
 Required for the AI Image and AI Text Plugins
 
-- Login or create an account on the [Open AI developer platform](https://platform.openai.com/docs/overview)
-- Crate a secret key from the API Keys tab in the Settings page
+- Login or create an account on the [OpenAI developer platform](https://platform.openai.com/docs/overview)
+- Create a secret key from the API Keys tab in the Settings page
     - It is recommended to set up Auto recharge (found in the "Billing" tab)
-    - Optionally set a Budge Limit in the Limits tab
+    - Optionally set a Budget Limit in the Limits tab
 - Store your key in the .env file with the key `OPEN_AI_SECRET`
     ```
     OPEN_AI_SECRET=your-key
@@ -40,7 +40,7 @@ Required for the Weather Plugin
     - Subscribe at [One Call API 3.0 Subscription](https://home.openweathermap.org/subscriptions/billing_info/onecall_30/base?key=base&service=onecall_30)
     - Follow the instructions to complete the subscription.
     - Navigate to [Your Subscriptions](https://home.openweathermap.org/subscriptions) and set "Calls per day (no more than)" to 1,000 to avoid exceeding the free limit
-- Store your api key in the .env file with the key `OPEN_WEATHER_MAP_SECRET`
+- Store your API key in the .env file with the key `OPEN_WEATHER_MAP_SECRET`
     ```
     OPEN_WEATHER_MAP_SECRET=your-key
     ```
@@ -53,7 +53,7 @@ Required for the APOD Plugin
    - Fill your First name, Last name, and e-mail address
 - The APOD plugin uses the [NASA APIs](https://api.nasa.gov/)
    - Free for up to 1,000 requests per hour
-- Store your api key in the .env file with the key `NASA_SECRET`
+- Store your API key in the .env file with the key `NASA_SECRET`
     ```
     NASA_SECRET=your-key
     ```
@@ -66,7 +66,7 @@ Required for the Unsplash Plugin
 - Go to https://unsplash.com/oauth/applications 
 - Create an app and open it
 - Your KEY is listed as `Access Key`
-- Store your api key in the .env file with the key `UNSPLASH_ACCESS_KEY`
+- Store your API key in the .env file with the key `UNSPLASH_ACCESS_KEY`
     ```
     UNSPLASH_ACCESS_KEY=your-key
     ```
@@ -78,7 +78,7 @@ Required for the GitHub Plugin
 - Login to your Github profile https://github.com/settings/profile
 - Under Developer Settings, create a new Personal access token (classic)
 - Assign the `read:user` scope and generate the token
-- Store your api key in the .env file with the key `GITHUB_SECRET`
+- Store your API key in the .env file with the key `GITHUB_SECRET`
     ```
     GITHUB_SECRET=your-key
     ```

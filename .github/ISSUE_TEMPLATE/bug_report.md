@@ -21,7 +21,7 @@ Steps to reproduce the behavior:
 4. See error
 
 **Logs**
-Provide the InkyPi service logs, see [troubleshooting.md](./docs/troubleshooting.md) for instructions on how to view logs.
+Provide the InkyPi service logs, see [troubleshooting.md](../../docs/troubleshooting.md) for instructions on how to view logs.
 
 **Screenshots**
 If applicable, add screenshots to help explain your problem.

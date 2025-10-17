@@ -15,7 +15,7 @@ Works on **macOS**, **Linux**, and **Windows** - no hardware needed!
 
 ```bash
 # 1. Clone and setup
-git clone https://github.com/mudmin/InkyPi.git
+git clone https://github.com/fatihak/InkyPi.git
 cd InkyPi
 
 # 2. Create virtual environment

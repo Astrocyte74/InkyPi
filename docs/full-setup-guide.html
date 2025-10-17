@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>InkyPi – End-to-End Setup Guide</title>
+  <style>
+    html { scroll-behavior: smooth; }
+    body { font-family: Arial, Helvetica, sans-serif; line-height: 1.6; color: #222; margin: 0; padding: 2rem 2rem 2rem 300px; background: #fafafa; }
+    h1, h2, h3 { color: #0d3c61; }
+    /* Ensure anchor jumps account for sticky quickbar */
+    h2[id], h3[id] { scroll-margin-top: 84px; }
+    code { background: #efefef; padding: 0.1rem 0.3rem; border-radius: 3px; }
+    pre { background: #efefef; padding: 1rem; overflow-x: auto; border-radius: 4px; }
+    a { color: #0d6efd; }
+    .note { border-left: 4px solid #0d6efd; background: #e8f2ff; padding: 0.75rem 1rem; margin: 1rem 0; }
+    .tip { border-left: 4px solid #198754; background: #e6f5ec; padding: 0.75rem 1rem; margin: 1rem 0; }
+    ol > li { margin-bottom: 0.8rem; }
+    .ssh { color: #b00020; font-weight: 700; }
+    .legend { border-left: 4px solid #6f42c1; background: #f4efff; padding: 0.75rem 1rem; margin: 1rem 0; }
+    .quickbar { border-left: 4px solid #0d6efd; background: #eef6ff; padding: 0.75rem 1rem; margin: 1rem 0; position: sticky; top: 0; z-index: 1000; box-shadow: 0 1px 6px rgba(0,0,0,0.06); display: flex; flex-wrap: wrap; gap: 1rem; }
+    .quickbar .item { display: flex; align-items: center; gap: 0.35rem; }
+    .quickbar .label { color: #0d3c61; font-weight: 700; }
+    .warning { border-left: 4px solid #b00020; background: #ffecec; padding: 0.75rem 1rem; margin: 1rem 0; }
+    .toc { border-left: 4px solid #6c757d; background: #f7f7f7; padding: 0.75rem 1rem; margin: 1rem 0; }
+    .toc ol { margin: 0.5rem 0 0 1rem; }
+    .toc a { text-decoration: none; }
+    .sidebar { position: fixed; top: 0; left: 0; height: 100vh; width: 260px; background: #ffffff; border-right: 1px solid #e2e8f0; padding: 1rem; overflow-y: auto; }
+    .sidebar h2 { font-size: 1.1rem; margin: 0.5rem 0 0.75rem; color: #0d3c61; }
+    .sidebar .nav { list-style: none; margin: 0; padding: 0; }
+    .sidebar .nav li { margin: 0.35rem 0; }
+    .sidebar .nav a { color: #0d3c61; text-decoration: none; display: block; padding: 0.25rem 0.25rem; border-radius: 4px; }
+    .sidebar .nav a:hover { background: #eef6ff; }
+  </style>
+</head>
+<body>
+  <aside class="sidebar">
+    <h2>InkyPi Guide</h2>
+    <ul class="nav">
+      <li><a href="#sec-prepare">1. Prepare Your Workstation</a></li>
+      <li><a href="#sec-flash">2. Flash Raspberry Pi OS</a></li>
+      <li><a href="#sec-first-boot">3. First Boot</a></li>
+      <li><a href="#sec-install">4. Install InkyPi</a></li>
+      <li><a href="#sec-wifi">5. Configure Wi‑Fi</a></li>
+      <li><a href="#sec-env">6. API Keys (.env)</a></li>
+      <li><a href="#sec-plugins">7. Plugins & Playlists</a></li>
+      <li><a href="#sec-enhancements">8. Enhancements</a></li>
+      <li><a href="#sec-integrations">9. API Integrations</a></li>
+      <li><a href="#sec-codex">10. Codex CLI</a></li>
+      <li><a href="#sec-future">11. Future Ideas</a></li>
+      <li><a href="#sec-troubleshooting">12. Troubleshooting</a></li>
+      <li><a href="#sec-quickref">13. Quick Reference</a></li>
+      <li><a href="#sec-reimage">14. Reimaging</a></li>
+      <li><a href="#sec-hostkey">15. SSH Host Key</a></li>
+    </ul>
+  </aside>
+  <h1>InkyPi &mdash; Complete Setup Guide</h1>
+  <p>This guide walks through provisioning a Raspberry&nbsp;Pi and installing the latest InkyPi from the official repository. It reflects the current install/update flow, Waveshare support, and plugin/API key configuration.</p>
+
+  <div class="quickbar">
+    <span class="item"><span class="label">SSH:</span><span class="ssh"><code>ssh mcdarby@inkypi.local</code></span></span>
+    <span class="item"><span class="label">Repo:</span><code>cd /home/mcdarby/InkyPi</code></span>
+    <span class="item"><span class="label">Codex:</span><code>codex</code></span>
+    <span class="item"><span class="label">Web UI:</span><a href="http://inkypi.local" target="_blank">http://inkypi.local</a></span>
+    <span class="item"><span class="label">Logs:</span><code>journalctl -u inkypi.service -f</code></span>
+    <span class="item"><span class="label">Download:</span><a href="http://inkypi.local/download-logs?hours=4" target="_blank">last 4h</a></span>
+    <span class="item"><span class="label">Service:</span><code>sudo systemctl status inkypi.service</code></span>
+    <span class="item"><span class="label">Restart:</span><code>sudo systemctl restart inkypi.service</code></span>
+    <span class="item"><span class="label">Shutdown:</span><code>sudo shutdown now</code></span>
+    <span class="item"><span class="label">APOD test:</span><code>set -a; . /usr/local/inkypi/.env; curl -4 -sS --connect-timeout 5 --max-time 45 "https://api.nasa.gov/planetary/apod?api_key=$NASA_SECRET"; set +a</code></span>
+  </div>
+
+  <div class="legend">
+    <strong>How to Read This Guide</strong>
+    <ul>
+      <li><strong>Code blocks</strong>: You can paste an entire block or run each line separately. Lines joined with <code>&amp;&amp;</code> run the next command only if the previous one succeeds.</li>
+      <li><strong>SSH callouts</strong>: Red commands like <span class="ssh"><code>ssh mcdarby@inkypi.local</code></span> show how to log in. Replace <code>mcdarby</code> with your Pi username if different.</li>
+      <li><strong>Reboots</strong>: <code>sudo reboot</code> immediately disconnects your SSH session; reconnect after the Pi comes back up.</li>
+    </ul>
+  </div>
+
+  
+
+  <h2 id="sec-prepare">1. Prepare Your Workstation</h2>
+  <ol>
+    <li>Install <a href="https://www.raspberrypi.com/software/">Raspberry Pi Imager</a>.</li>
+    <li>Install <code>git</code> and a terminal/SSH client (macOS and Linux ship with both; Windows users can install <a href="https://gitforwindows.org/">Git for Windows</a> or use WSL).</li>
+    
+  </ol>
+
+  <h2 id="sec-flash">2. Flash Raspberry Pi OS to the microSD Card</h2>
+  <ol>
+    <li>Launch Raspberry Pi Imager.</li>
+    <li>Select OS &rarr; <strong>Raspberry Pi OS Lite (32‑ or 64‑bit)</strong>.
+      <ul>
+        <li><strong>Pi 4/5 or 2–8&nbsp;GB RAM</strong>: prefer 64‑bit (aarch64) for performance and package availability.</li>
+        <li><strong>Pi Zero 2 W / Pi 3 (1&nbsp;GB)</strong>: choose 32‑bit for lower memory footprint.</li>
+
+      </ul>
+    </li>
+    <li>Select your microSD card under Storage.</li>
+    <li>Click the settings (gear) icon and configure:
+      <ul>
+        <li><strong>Hostname</strong>: e.g. <code>inkypi</code></li>
+        <li><strong>Enable SSH</strong>: use password authentication</li>
+        <li><strong>Username/Password</strong>: e.g. <code>mcdarby</code> / a strong password</li>
+        <li><strong>Configure Wi-Fi</strong>: enter SSID and passphrase of your primary network</li>
+        <li><strong>Set Locale Options</strong>: timezone, keyboard, locale</li>
+      </ul>
+    </li>
+    <li>Write the image and eject the card when complete.</li>
+  </ol>
+  <div class="tip"><strong>Add multiple Wi‑Fi networks now:</strong> Use the Raspberry Pi Imager settings to preconfigure Wi‑Fi networks. You can also add or adjust networks after first boot via <code>nmtui</code> (see Section&nbsp;5).</div>
+
+  <h2 id="sec-first-boot">3. First Boot</h2>
+  <ol>
+    <li>Insert the card into the Raspberry Pi, attach the Pimoroni Inky Impression HAT, and connect power.</li>
+    <li>Wait 1&ndash;2 minutes for boot and Wi-Fi association.</li>
+    <li>Locate the Pi&rsquo;s IP address from your router or log in with <span class="ssh"><code>ssh mcdarby@inkypi.local</code></span>.</li>
+    <li>Update packages:
+      <pre><code>sudo apt update
+sudo apt full-upgrade -y
+sudo reboot</code></pre>
+    </li>
+    <div class="tip"><strong>How to run commands:</strong> You can paste the whole block; the shell runs one line at a time. It’s also fine to run each line separately. Using <code>&amp;&amp;</code> (e.g., <code>sudo apt update &amp;&amp; sudo apt full-upgrade -y</code>) runs the next command only if the previous one succeeds. <strong>Note:</strong> <code>sudo reboot</code> will immediately disconnect your SSH session.</div>
+  </ol>
+
+  <h2 id="sec-install">4. Install InkyPi (on the Pi)</h2>
+  <ol>
+    <li>SSH to the Pi and install git (if needed), then clone the official repository:
+      <pre><code>sudo apt update && sudo apt install -y git
+git clone https://github.com/fatihak/InkyPi.git
+cd InkyPi</code></pre>
+    </li>
+    <div class="tip"><code>&amp;&amp;</code> means “run the next command only if the previous succeeded”. You can also run the lines one at a time.</div>
+    <li>Run the installer (auto-enables SPI/I2C, installs dependencies, creates the service):
+      <pre><code># For Pimoroni Inky displays
+sudo bash install/install.sh
+
+# For Waveshare e‑Paper displays (specify your model, e.g. epd7in3f)
+sudo bash install/install.sh -W epd7in3f</code></pre>
+      The script prompts to reboot when finished. After reboot, access the web UI at <code>http://inkypi.local</code> or <code>http://&lt;pi-ip&gt;</code>. When you need to log back in, use <span class="ssh"><code>ssh mcdarby@inkypi.local</code></span>.
+    </li>
+
+  </ol>
+
+  <h2 id="sec-wifi">5. Configure Wi‑Fi Networks (optional)</h2>
+  <p>On Raspberry Pi OS Bookworm, Wi‑Fi is managed by <strong>NetworkManager</strong>. Add multiple networks and set priorities using either the TUI or CLI below.</p>
+  <p><strong>Option A — TUI (easiest):</strong></p>
+  <pre><code>sudo nmtui</code></pre>
+  <p><em>Navigation:</em> Arrow keys to move, Tab to switch buttons/fields, Space to toggle checkboxes, Enter to select, Esc to go back.</p>
+  <p><strong>Add a new Wi‑Fi:</strong></p>
+  <ol>
+    <li>Select <strong>Edit a connection</strong>.</li>
+    <li>Press Tab until <strong>Add</strong> is highlighted, press Enter, then choose <strong>Wi‑Fi</strong>.</li>
+    <li>Set <strong>Device</strong> to <code>wlan0</code>, enter the <strong>SSID</strong>, choose <strong>WPA &amp; WPA2 Personal</strong> (or the appropriate security), and enter the password.</li>
+    <li>Enable <strong>Automatically connect</strong>, set an appropriate <strong>Autoconnect priority</strong> (higher = preferred), then save with <strong>OK</strong>.</li>
+    <li>Return to the main menu, choose <strong>Activate a connection</strong>, highlight the new network, and press Enter to connect.</li>
+  </ol>
+  <p><strong>Edit an existing Wi‑Fi:</strong></p>
+  <ol>
+    <li>From the main menu choose <strong>Edit a connection</strong>.</li>
+    <li>Highlight the connection name (e.g., <code>HomeNetwork</code>) and press Enter.</li>
+    <li>Ensure <strong>Automatically connect</strong> is checked and set <strong>Autoconnect priority</strong> (higher = preferred). Typical example: Home <code>10</code>, Travel <code>5</code>.</li>
+    <li>Tab to <strong>OK</strong> (or <strong>Save</strong>), press Enter, then <strong>Back</strong> → <strong>Quit</strong>.</li>
+  </ol>
+  <p><strong>Add a hidden/manual Wi‑Fi:</strong></p>
+  <ol>
+    <li><strong>Edit a connection</strong> → <strong>Add</strong> → select <strong>Wi‑Fi</strong>.</li>
+    <li>Set <strong>Device</strong> to <code>wlan0</code>, fill <strong>SSID</strong>, set <strong>Security</strong> to <em>WPA &amp; WPA2 Personal</em> (or appropriate), enter the password.</li>
+    <li>Check <strong>Automatically connect</strong>, set <strong>Autoconnect priority</strong>, then <strong>OK</strong>.</li>
+    <li>Return to <strong>Activate a connection</strong> to connect if it hasn’t connected automatically.</li>
+  </ol>
+  <p><strong>Option B — CLI:</strong></p>
+  <pre><code># List visible Wi‑Fi networks
+nmcli device wifi list
+
+# Add/connect two networks
+sudo nmcli dev wifi connect "HomeNetwork" password "home-password"
+sudo nmcli dev wifi connect "TravelNetwork" password "travel-password"
+
+# Set autoconnect priorities (higher preferred)
+sudo nmcli connection modify "HomeNetwork" connection.autoconnect-priority 10
+sudo nmcli connection modify "TravelNetwork" connection.autoconnect-priority 5
+
+# Verify active connections
+nmcli -t -f NAME,DEVICE connection show --active</code></pre>
+  <p>NetworkManager stores profiles in <code>/etc/NetworkManager/system-connections/*.nmconnection</code> (root‑owned, 600 perms).</p>
+  <div class="note"><strong>Legacy images:</strong> If NetworkManager is not active, Wi‑Fi may be managed by <code>wpa_supplicant</code>. In that case, edit <code>/etc/wpa_supplicant/wpa_supplicant.conf</code> with <code>network</code> blocks and reload with <code>sudo wpa_cli -i wlan0 reconfigure</code>.</div>
+
+  <h2 id="sec-env">6. Configure API Keys (.env)</h2>
+  <p>Some plugins require API keys stored in a <code>.env</code> at the project root. Create the file on the Pi and add the keys you use:</p>
+  <pre><code>cd /usr/local/inkypi
+sudo nano .env</code></pre>
+  <p>Common keys:</p>
+  <ul>
+    <li><code>OPEN_WEATHER_MAP_SECRET</code> &mdash; required for the Weather plugin (One Call API 3.0 subscription; free up to 1,000 requests/day).</li>
+    <li><code>OPEN_AI_SECRET</code> &mdash; for AI Image/Text plugins.</li>
+    <li><code>NASA_SECRET</code> &mdash; for Astronomy Picture of the Day.</li>
+    <li><code>UNSPLASH_ACCESS_KEY</code> &mdash; for the Unsplash plugin.</li>
+  </ul>
+  <p><strong>Example .env template</strong> (copy/paste and replace with your real keys):</p>
+  <pre><code># InkyPi plugin API keys
+
+# Weather (OpenWeather One Call 3.0)
+# Sign up and subscribe (free up to 1,000/day): https://openweathermap.org/price
+OPEN_WEATHER_MAP_SECRET=replace-with-your-openweather-key
+
+# OpenAI (AI Image / AI Text)
+# Create a key: https://platform.openai.com/
+OPEN_AI_SECRET=replace-with-your-openai-key
+
+# NASA Astronomy Picture of the Day
+# Request a key: https://api.nasa.gov/
+NASA_SECRET=replace-with-your-nasa-key
+
+# Unsplash image feed
+# Create an app + use the Access Key: https://unsplash.com/developers
+UNSPLASH_ACCESS_KEY=replace-with-your-unsplash-access-key
+</code></pre>
+  <p>Notes:</p>
+  <ul>
+    <li>One key per line, format <code>NAME=value</code>; quotes are optional.</li>
+    <li>Lines starting with <code>#</code> are comments and are ignored.</li>
+    <li>After editing <code>.env</code>, restart the service so plugins can read the values.</li>
+  </ul>
+  <p>Save the file and restart the service to apply changes:</p>
+  <pre><code>sudo systemctl restart inkypi.service</code></pre>
+
+  <div class="warning">
+    <strong>IMPORTANT: Make the service load your .env</strong><br>
+    By default, the <code>inkypi.service</code> runs with <code>WorkingDirectory=/run/inkypi</code>, so python‑dotenv may not find <code>/usr/local/inkypi/.env</code> when the app runs under systemd. Apply this one‑time override so the service reads your keys reliably (persists across reboots and power cycles):
+    <pre><code>sudo systemctl edit inkypi.service</code></pre>
+    Paste the following, then save and exit:
+    <pre><code>[Service]
+WorkingDirectory=/usr/local/inkypi
+EnvironmentFile=-/usr/local/inkypi/.env</code></pre>
+    Reload and restart the service:
+    <pre><code>sudo systemctl daemon-reload
+sudo systemctl restart inkypi.service</code></pre>
+    Verify the override is active:
+    <pre><code>sudo systemctl show -p WorkingDirectory -p EnvironmentFiles inkypi.service
+pid=$(systemctl show -p MainPID --value inkypi.service)
+sudo sh -c "tr '\0' '\n' &lt;/proc/$pid/environ" | grep '^OPEN_WEATHER_MAP_SECRET='</code></pre>
+    Notes:
+    <ul>
+      <li>This change survives reboots and power cycles. Re‑apply only if you re‑image the OS or fully uninstall/reinstall the service.</li>
+      <li>Alternative (quick): symlink <code>.env</code> into the service runtime directory: <code>sudo ln -sf /usr/local/inkypi/.env /run/inkypi/.env</code>.</li>
+    </ul>
+  </div>
+
+  <h2 id="sec-plugins">7. Configure Plugins &amp; Playlists</h2>
+  <p>Use <strong>Update Now</strong> for one-off testing, and <strong>Add to Playlist</strong> for automatic updates. The background task refreshes items in the active playlist based on the global interval set in <strong>Settings</strong>.</p>
+  <p><strong>Steps (Weather example):</strong></p>
+  <ol>
+    <li>Open the <strong>Weather</strong> plugin, click <strong>Select Location</strong>, choose <em>Units</em>, and pick any display options (e.g., <em>Weather Graph</em>).</li>
+    <li>Click <strong>Update Now</strong> once to confirm it renders with your API key.</li>
+    <li>Click <strong>Add to Playlist</strong>, choose a playlist (or the default), and give the instance a descriptive name (e.g., <code>Weather – Home</code>).</li>
+    <li>Open <strong>Settings</strong> → set <strong>Plugin cycle interval</strong> to your desired frequency (e.g., 15–60 minutes). The background task rotates through playlist items automatically.</li>
+  </ol>
+  <p><strong>Tips:</strong></p>
+  <ul>
+    <li><strong>Single plugin frame</strong>: keep only Weather in the playlist for a dedicated display.</li>
+    <li><strong>Multiple plugins</strong>: the interval is global; with N items, each is visited every N×interval. Use per-plugin refresh options (if shown) to make some daily while others are frequent.</li>
+    <li><strong>API usage (OpenWeather)</strong>: each refresh makes ~2–3 calls (One Call 3.0 + Air Quality + optional Reverse Geocoding). At 30 min ~144 calls/day; at 5 min ~864 calls/day (still under the 1,000/day free tier).</li>
+    <li><strong>AI plugins</strong>: can incur cost; schedule sparingly (e.g., daily) or use <strong>Update Now</strong> only.</li>
+    <li><strong>Edit later</strong>: to tweak a saved Weather instance (and keep lat/long), open <strong>Playlists</strong> → select your playlist → press the edit icon next to the plugin. The bare <code>/plugin/weather</code> page always starts blank.</li>
+    <li><strong>Debugging</strong>: use <code>journalctl -u inkypi -f</code> or <a href="http://inkypi.local/download-logs?hours=2" target="_blank">Download Logs</a> while clicking <strong>Update Now</strong>.</li>
+  </ul>
+
+  
+
+  <h2 id="sec-enhancements">8. Optional Enhancements</h2>
+  <ul>
+    <li>Tail logs during development:
+      <pre><code>journalctl -u inkypi.service -f</code></pre>
+    </li>
+    <li>Enable additional plugins or customize templates under <code>/usr/local/inkypi/src/plugins</code>.</li>
+    <li>Configure refresh cadence in the web UI (Settings &rarr; Plugin cycle interval). No external scheduler is required.</li>
+    <li>Download logs from the browser: open <strong>Settings</strong> in the web UI and click <strong>Download Logs</strong>, or visit <code>http://inkypi.local/download-logs?hours=4</code> to fetch the last 4 hours.</li>
+    <li>Secure the web UI by placing the Pi behind a VPN or using a reverse proxy with authentication.</li>
+  </ul>
+
+  <h2 id="sec-integrations">9. Optional API Integrations</h2>
+  <p>InkyPi includes plugins that call external APIs. Add the corresponding keys to <code>.env</code> and restart the service so the plugins can authenticate.</p>
+  <ul>
+    <li><strong>OpenAI (AI Image / AI Text)</strong>
+      <ol>
+        <li>Generate a secret key at <a href="https://platform.openai.com/">platform.openai.com</a>.</li>
+        <li>Add to <code>.env</code> as:
+          <pre><code>OPEN_AI_SECRET="sk-...your-key..."</code></pre>
+        </li>
+        <li>Restart the service: <code>sudo systemctl restart inkypi.service</code></li>
+        <li>Configure the AI Image/Text plugin in the web UI.</li>
+      </ol>
+    </li>
+    <li><strong>NASA Astronomy Picture of the Day</strong>
+      <ol>
+        <li>Request a key at <a href="https://api.nasa.gov/">api.nasa.gov</a>.</li>
+        <li>Add to <code>.env</code> as:
+          <pre><code>NASA_SECRET="your-nasa-key"</code></pre>
+        </li>
+        <li>Restart the service, then enable the APOD plugin.</li>
+      </ol>
+      <p class="note">Tip: APOD images can be huge. Edit <code>/usr/local/inkypi/src/plugins/apod/apod.py</code> to prefer <code>url</code> over <code>hdurl</code> and add <code>timeout=...</code> to <code>requests.get()</code> for faster, safer updates.</p>
+    </li>
+    <li><strong>Unsplash (Image feed)</strong>
+      <ol>
+        <li>Create an app at <a href="https://unsplash.com/developers">unsplash.com/developers</a> and copy the Access Key.</li>
+        <li>Add to <code>.env</code> as:
+          <pre><code>UNSPLASH_ACCESS_KEY="your-unsplash-key"</code></pre>
+        </li>
+        <li>Restart, then configure the Unsplash plugin (query, collection, etc.).</li>
+      </ol>
+    </li>
+  </ul>
+  <p class="tip">Keep secrets out of Git. Store them only in <code>.env</code> and restart the service after changes.</p>
+
+  <h2 id="sec-codex">10. Run Codex CLI on the Pi (OAuth via tunnel)</h2>
+  <p>Authenticate the OpenAI Codex CLI on a headless Pi by forwarding the local callback through your Mac.</p>
+  <p><strong>Requirements</strong>:</p>
+  <ul>
+    <li>Pi with SSH access and Codex CLI installed (<code>npm install -g @openai/codex</code> requires Node.js 22+ and npm 10+).</li>
+    <li>Mac (or another computer) that can SSH to the Pi.</li>
+  </ul>
+  <p><strong>Steps</strong>:</p>
+  <ol>
+    <li><strong>Forward port 1455</strong> from your Mac and keep the session open:
+      <pre><code>ssh -L 1455:localhost:1455 mcdarby@inkypi.local</code></pre>
+    </li>
+    <li><strong>Verify the tunnel</strong> (optional but reassuring):</li>
+  </ol>
+  <div class="note">
+    <p><em>On the Pi</em>:</p>
+    <pre><code>sudo apt install -y netcat-openbsd
+nc -l 1455</code></pre>
+    <p><em>On the Mac (new terminal)</em>:</p>
+    <pre><code>curl http://localhost:1455</code></pre>
+    <p>If you see <code>GET / HTTP/1.1</code> appear on the Pi, the tunnel works. Press <code>Ctrl+C</code> on the Pi to stop <code>nc</code>.</p>
+  </div>
+  <ol start="3">
+    <li><strong>Launch Codex CLI</strong> on the Pi and choose “Sign in with ChatGPT”:
+      <pre><code>codex</code></pre>
+      Copy the authentication URL that appears.</li>
+    <li><strong>Authenticate in your Mac browser</strong>: paste the URL, sign in to OpenAI, and approve the connection. The redirect to <code>http://localhost:1455/auth/callback</code> travels through the tunnel back to the Pi.</li>
+    <li><strong>Confirm success</strong>: the Pi terminal shows the signed-in message. Test with:
+      <pre><code>codex hello</code></pre>
+    </li>
+  </ol>
+  <p class="tip">Need to reconnect later? Repeat the tunneling steps. Close the tunnel anytime with <code>Ctrl+C</code> in the Mac’s SSH window.</p>
+
+  <h3>Codex helpers and GitHub credentials</h3>
+  <ul>
+    <li><strong>Alias for “no approval” mode</strong>: append this once on the Pi so <code>codex-na</code> skips approval prompts:
+      <pre><code>echo "alias codex-na='codex --ask-for-approval never'" >> ~/.bashrc
+alias codex-na='codex --ask-for-approval never'   # immediate use in current shell</code></pre>
+    </li>
+    <li><strong>Store your GitHub Personal Access Token (PAT)</strong> for pushes from Codex:
+      <ol>
+        <li>Generate a PAT on GitHub with at least <code>repo</code> scope and copy it.</li>
+        <li>On the Pi:
+          <pre><code>git config --global credential.helper store
+cd /home/mcdarby/InkyPi
+git push origin main   # supply GitHub username + the PAT when prompted</code></pre>
+          Git caches the token in <code>~/.git-credentials</code>.</li>
+        <li>Optional: let Codex reuse the token by storing it in <code>~/.config/codex/config.json</code>:
+          <pre><code>{
+  "integrations": {
+    "github": {
+      "token": "ghp_yourTokenHere"
+    }
+  }
+}</code></pre>
+          (Create the file if it doesn’t exist.)</li>
+      </ol>
+    </li>
+  </ul>
+
+  <h2 id="sec-future">11. Future Ideas</h2>
+  <ul>
+    <li><strong>Smart playlists</strong>: allow different refresh cadences per plugin (e.g., Weather every 30 min, APOD daily) by adding per-item schedules.</li>
+    <li><strong>Local image cache</strong>: keep a rolling cache so APOD/Unsplash can display fallback content when there’s no network.</li>
+    <li><strong>Sensor integrations</strong>: read local temperature, CO₂, or motion sensors via MQTT/Home Assistant and display custom dashboards.</li>
+    <li><strong>Theme packs</strong>: ship alternate CSS/font packs or color palettes so the web UI and rendered images match your decor.</li>
+    <li><strong>Remote management</strong>: add optional VPN/ZeroTier scripts or a companion mobile app for secure access outside the LAN.</li>
+    <li><strong>Multi-frame sync</strong>: coordinate playlists across multiple InkyPi devices (e.g., staggered art frames or whole-house status boards).</li>
+  </ul>
+
+  <h2 id="sec-troubleshooting">12. Quick Troubleshooting Checklist</h2>
+  <ul>
+    <li>No display update? Check <code>systemctl status inkypi.service</code> and ensure SPI/I2C are enabled (<code>sudo raspi-config</code>).</li>
+    <li>Weather plugin errors? Confirm API key:
+      <pre><code>curl "https://api.openweathermap.org/data/2.5/weather?q=Carstairs,CA&amp;appid=YOUR_KEY"</code></pre>
+      Replace <code>YOUR_KEY</code> with your actual key.</li>
+    <li>Ensure the runtime <code>.env</code> has: <code>OPEN_WEATHER_MAP_SECRET</code> (One Call API 3.0 subscription required). See repo docs for details.</li>
+    <li>Slow Chromium install? Allow the installer to complete; the script installs <code>chromium-headless-shell</code> and other dependencies.</li>
+    <li><strong>git: command not found</strong>: Install git on the Pi first:
+      <code>sudo apt update && sudo apt install -y git</code>.</li>
+    <li><strong>zramswap service error during install</strong>: If you see “Job for zramswap.service failed…”, installation can still succeed. Check status with <code>systemctl status zramswap</code>. You can disable it via <code>sudo systemctl disable --now zramswap</code> or re-run <code>sudo bash install/update.sh</code> after reboot.</li>
+    <li><strong>pip/piwheels certificate error</strong>: If pip fails with <em>certificate verify failed (piwheels)</em>, run <code>sudo apt update && sudo apt full-upgrade</code> and try again. As a workaround, temporarily use PyPI by creating <code>~/.pip/pip.conf</code> with <code>[global]\nindex-url = https://pypi.org/simple</code> and re-running the installer.</li>
+    <li><strong>APOD spinner</strong>: NASA’s API can be slow. Test connectivity with <code>curl -4 --connect-timeout 5 --max-time 45 "https://api.nasa.gov/planetary/apod?api_key=YOUR_KEY"</code>. If it times out, wait and retry or switch the plugin to use <code>url</code> instead of <code>hdurl</code>.</li>
+    <li>Using a Pi Zero W? See the repo&rsquo;s troubleshooting notes for known installation issues.</li>
+    <li>Need to reimage? Repeat Sections 1&ndash;9 with fresh SD media; this guide ensures results are reproducible.</li>
+  </ul>
+
+  <h2 id="sec-quickref">13. Quick Reference Commands</h2>
+  <pre><code># Install (on Pi)
+sudo apt update && sudo apt install -y git
+git clone https://github.com/fatihak/InkyPi.git && cd InkyPi
+sudo bash install/install.sh                 # Inky
+sudo bash install/install.sh -W epd7in3f     # Waveshare
+
+# Update to latest and apply
+cd InkyPi && git pull
+sudo bash install/update.sh
+
+# Uninstall
+sudo bash install/uninstall.sh
+
+# Start/stop the service
+sudo systemctl restart inkypi.service
+sudo systemctl status inkypi.service
+
+# Access the Web UI
+# http://inkypi.local or http://&lt;pi-ip&gt;</code></pre>
+
+  <h2 id="sec-reimage">14. Reimaging Checklist</h2>
+  <ol>
+    <li>Flash Raspberry Pi OS Lite, set hostname/SSH/Wi-Fi(s).</li>
+    <li>Boot Pi, perform <code>apt update</code> &amp; <code>apt full-upgrade</code>.</li>
+    <li>Clone <code>InkyPi</code> on the Pi and run <code>sudo bash install/install.sh</code> (or <code>-W &lt;waveshare-model&gt;</code>).</li>
+    <li>Create <code>/usr/local/inkypi/.env</code> with required keys (e.g., <code>OPEN_WEATHER_MAP_SECRET</code>), then <code>sudo systemctl restart inkypi.service</code>.</li>
+    <li>Open the web UI, configure plugins, and set the plugin cycle interval.</li>
+  </ol>
+
+  <h2 id="sec-hostkey">15. SSH Host Key Changed After Reimage</h2>
+  <p>After re-imaging, the Pi generates new SSH host keys. Your computer will detect the change and may refuse to connect with a warning like <em>REMOTE HOST IDENTIFICATION HAS CHANGED!</em> This is expected. If you are sure you are connecting to your Pi, remove the old key and accept the new fingerprint.</p>
+  <ol>
+    <li><strong>Verify target</strong>: confirm the device/IP is your Pi (e.g., <code>ping inkypi.local</code> or check your router's DHCP table).</li>
+    <li><strong>Remove old host key</strong> on your workstation:
+      <pre><code>ssh-keygen -R inkypi.local
+ssh-keygen -R &lt;Pi_IP&gt;</code></pre>
+      If the warning shows an offending line in <code>~/.ssh/known_hosts</code>, delete that line (macOS/BSD example):
+      <pre><code>sed -i.bak '10d' ~/.ssh/known_hosts</code></pre>
+    </li>
+    <li><strong>Reconnect</strong> and accept the new fingerprint:
+      <pre><code><span class="ssh">ssh mcdarby@inkypi.local</span></code></pre>
+    </li>
+  </ol>
+
+  <p class="tip">Print this page or save the PDF so you can rebuild the project without hunting for notes.</p>
+
+</body>
+</html>

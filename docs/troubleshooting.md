@@ -101,7 +101,7 @@ sudo systemctl restart inkypi.service
 
 ### Missing modules
 
-Ensure that the necessary modeules are available in the python environment. Waveshare requires:
+Ensure that the necessary modules are available in the python environment. Waveshare requires:
 
 - gpiozero
 - lgpio
@@ -111,9 +111,9 @@ in addition to the libraries that are normally installed for Inky screens.
 
 ### Screen not updating
 
-Verify SPI configuration using `ls /dev/sp*`.  There should be two entries for _spidev0.0_ and _spidev0.1_.  
+Verify SPI configuration using `ls /dev/sp*`. There should be two entries for _spidev0.0_ and _spidev0.1_.
 
-If only the first is visible, check _/boot/firmware/config.txt_. The regular install of InkyPi adds `dtoverlay=spi0-0cs` to the this file.  If it is there, either delete it (for default behaviour) or specifically add `dtoverlay=spi0-2cs`.
+If only the first is visible, check _/boot/firmware/config.txt_. The regular install of InkyPi adds `dtoverlay=spi0-0cs` to this file. If it is there, either delete it (for default behaviour) or specifically add `dtoverlay=spi0-2cs`.
 
 ### ERROR: Failed to download Waveshare driver
 

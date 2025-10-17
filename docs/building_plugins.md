@@ -8,7 +8,7 @@ This guide walks you through the process of creating a new plugin for InkyPi.
 - Create a new directory named after your plugin. The directory name will be the `id` of your plugin and should be all lowercase with no spaces. Example:
 
   ```bash
-  mkdir plugins/clock
+  mkdir src/plugins/clock
   ```
 
 ### 2. Create a Python File and Class for the Plugin
@@ -41,7 +41,7 @@ This guide walks you through the process of creating a new plugin for InkyPi.
             cached_index = settings.get("index", 0)
 
             # update value for next refresh
-            settings["index"] = settings["index"] + 1
+            settings["index"] = cached_index + 1
         ```
 
 ### 3. Create a Settings Template (Optional)
@@ -80,7 +80,7 @@ If your plugin requires user configuration through the web UI, you’ll need to 
     ```
 - Test and ensure that your plugin:
     - Loads correctly on service start.
-    - Appears under the "Plugins" section in the web UI with it's icon.
+    - Appears under the "Plugins" section in the web UI with its icon.
     - Generates images for different display sizes and orientations.
     - Settings template is rendered correctly.
     - Generates and displays images with immediate updates and in a playlist.
@@ -106,19 +106,19 @@ When a plugin is added to a playlist, a "Plugin Instance" is created, and its se
 - The `loadPluginSettings` variable should be checked to ensure the settings page is in "edit" mode.
 - Plugin settings are accessible via the `pluginSettings` object.
 - Example:
-    ```JavaScript
-    document.addEventListener('DOMContentLoaded', () => {     
+    ```javascript
+    document.addEventListener('DOMContentLoaded', () => {
         if (loadPluginSettings) {
-            # Text Input
-            document.getElementById('{textInputElementId}').value = pluginSettings.textInpuElementName || '';
+            // Text input
+            document.getElementById('{textInputElementId}').value = pluginSettings.textInputElementName || '';
 
-            # Radio
+            // Radio
             document.querySelector(`input[name="radioElementName"][value="${pluginSettings.radioElementName}"]`).checked = true;
 
-            # Color Input
-            document.getElementById('{colorInputElementId}').value = pluginSettings.colorInputElementName
+            // Color input
+            document.getElementById('{colorInputElementId}').value = pluginSettings.colorInputElementName;
 
-            ...
+            // ...
         }
     });
     ```
