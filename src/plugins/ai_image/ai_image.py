@@ -47,6 +47,8 @@ FAR_SIDE_INSTRUCTIONS = (
     "Use minimal text (preferably none), anthropomorphic characters, and avoid clutter or heavy shading."
 )
 
+TRUTHY_VALUES = {"1", "true", "yes", "on"}
+
 class AIImage(BasePlugin):
     def generate_settings_template(self):
         template_params = super().generate_settings_template()
@@ -72,6 +74,7 @@ class AIImage(BasePlugin):
     def generate_image(self, settings, device_config):
 
         api_key = device_config.load_env_key("OPEN_AI_SECRET")
+        display_guidance_enabled = AIImage._display_guidance_enabled(device_config)
         if not api_key:
             raise RuntimeError("OPEN AI API Key not configured.")
 
@@ -100,11 +103,12 @@ class AIImage(BasePlugin):
             elif style_hint in {'van_gogh', 'illustration', 'far_side'}:
                 text_prompt = AIImage.style_rewrite_prompt(prompt_client, text_prompt, style_hint)
 
-            if palette == 'bw':
-                text_prompt = f"{text_prompt}. {MONO_INSTRUCTIONS}"
-            else:
-                # default to spectra 6 instructions
-                text_prompt = f"{text_prompt}. {SPECTRA6_INSTRUCTIONS}"
+            if display_guidance_enabled:
+                if palette == 'bw':
+                    text_prompt = f"{text_prompt}. {MONO_INSTRUCTIONS}"
+                else:
+                    # default to spectra 6 instructions
+                    text_prompt = f"{text_prompt}. {SPECTRA6_INSTRUCTIONS}"
 
             if van_gogh_style or style_hint == 'van_gogh':
                 text_prompt = f"{text_prompt}. {VAN_GOGH_INSTRUCTIONS}"
@@ -120,7 +124,8 @@ class AIImage(BasePlugin):
                 text_prompt,
                 model=image_model,
                 quality=image_quality,
-                orientation=device_config.get_config("orientation")
+                orientation=device_config.get_config("orientation"),
+                display_guidance=display_guidance_enabled,
             )
         except Exception as e:
             logger.error(f"Failed to make Open AI request: {str(e)}")
@@ -128,17 +133,25 @@ class AIImage(BasePlugin):
         return image
 
     @staticmethod
-    def fetch_image(ai_client, prompt, model="dall-e-3", quality="standard", orientation="horizontal"):
+    def fetch_image(
+        ai_client,
+        prompt,
+        model="dall-e-3",
+        quality="standard",
+        orientation="horizontal",
+        display_guidance=True,
+    ):
         logger.info(f"Generating image for prompt: {prompt}, model: {model}, quality: {quality}")
-        prompt += (
-            ". The image should fully occupy the entire canvas without any frames, "
-            "borders, or cropped areas. No blank spaces or artificial framing."
-        )
-        prompt += (
-            "Focus on simplicity, bold shapes, and strong contrast to enhance clarity "
-            "and visual appeal. Avoid excessive detail or complex gradients, ensuring "
-            "the design works well with flat, vibrant colors."
-        )
+        if display_guidance:
+            prompt += (
+                ". The image should fully occupy the entire canvas without any frames, "
+                "borders, or cropped areas. No blank spaces or artificial framing."
+            )
+            prompt += (
+                "Focus on simplicity, bold shapes, and strong contrast to enhance clarity "
+                "and visual appeal. Avoid excessive detail or complex gradients, ensuring "
+                "the design works well with flat, vibrant colors."
+            )
         args = {
             "model": model,
             "prompt": prompt,
@@ -253,6 +266,11 @@ class AIImage(BasePlugin):
         rewritten = AIImage._call_prompt_service(prompt_client, system_content, user_content, temperature=0.85)
         logger.info("Style rewrite (%s): %s", style_hint, rewritten)
         return rewritten
+
+    @staticmethod
+    def _display_guidance_enabled(device_config):
+        flag = (device_config.load_env_key("AI_RELAX_DISPLAY_INSTRUCTIONS") or "").strip().lower()
+        return flag not in TRUTHY_VALUES
 
     @staticmethod
     def _call_prompt_service(prompt_client, system_content, user_content, temperature=0.7):

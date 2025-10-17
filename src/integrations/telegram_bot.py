@@ -7,6 +7,7 @@ from datetime import datetime
 from io import BytesIO
 
 import requests
+from requests.exceptions import HTTPError
 from PIL import Image
 
 from model import RefreshInfo
@@ -52,6 +53,10 @@ class TelegramBotListener:
     ]
 
     STYLE_LABELS = {value: label for value, label in STYLE_OPTIONS}
+    PALETTE_LABELS = {
+        "spectra6": "Colour",
+        "bw": "Black & White",
+    }
 
     def _style_button(self, request_id, request, style_value):
         base_label = self.STYLE_LABELS.get(style_value, style_value.capitalize())
@@ -245,9 +250,25 @@ class TelegramBotListener:
     def _api_post(self, method, data=None, files=None):
         url = f"{self.api_url}/{method}"
         resp = requests.post(url, data=data, files=files, timeout=60)
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except HTTPError as exc:
+            payload = {}
+            try:
+                payload = resp.json()
+            except ValueError:
+                pass
+            description = (payload.get("description") or "").lower()
+            if "message is not modified" in description:
+                logger.debug("Telegram API ignored edit: %s", payload.get("description"))
+                return payload
+            raise
         payload = resp.json()
         if not payload.get("ok"):
+            description = (payload.get("description") or "").lower()
+            if "message is not modified" in description:
+                logger.debug("Telegram API ignored edit: %s", payload.get("description"))
+                return payload
             raise RuntimeError(payload)
         return payload
 
@@ -313,7 +334,7 @@ class TelegramBotListener:
         elif action == "cycle_palette":
             self._cycle_palette(request)
             self._refresh_ai_message(request)
-            palette_label = "Spectra 6" if request["palette"] == "spectra6" else "Monochrome"
+            palette_label = self._get_palette_label(request["palette"])
             self._answer_callback(callback_query["id"], text=f"Palette: {palette_label}.")
         elif action == "generate":
             self._answer_callback(callback_query["id"], text="Generating image…")
@@ -383,6 +404,9 @@ class TelegramBotListener:
     def _cycle_palette(self, request):
         request["palette"] = "bw" if request["palette"] == "spectra6" else "spectra6"
 
+    def _get_palette_label(self, palette_key):
+        return self.PALETTE_LABELS.get(palette_key, palette_key.replace("_", " ").title())
+
     def _set_style(self, request, style):
         if style not in self.STYLE_LABELS:
             style = "none"
@@ -408,7 +432,7 @@ class TelegramBotListener:
         model_label = dict(self.AI_MODELS)[request["model"]]
         quality_label = request["quality"].capitalize()
         style_label = self.STYLE_LABELS.get(request.get("style", "none"), "None")
-        palette_label = "Spectra 6" if request["palette"] == "spectra6" else "Monochrome"
+        palette_label = self._get_palette_label(request["palette"])
         lines = [
             "🎨 AI Image Prompt",
             "",
@@ -437,7 +461,7 @@ class TelegramBotListener:
         for row in self.STYLE_ROWS:
             keyboard.append([self._style_button(request_id, request, style_value) for style_value in row])
 
-        palette_label = "Spectra 6" if request["palette"] == "spectra6" else "Monochrome"
+        palette_label = self._get_palette_label(request["palette"])
         keyboard.append(
             [
                 {
