@@ -95,6 +95,9 @@ class AIImage(BasePlugin):
             elif creative_enhance:
                 text_prompt = AIImage.enhance_prompt(prompt_client, text_prompt)
 
+            if style_hint in {'van_gogh', 'illustration', 'far_side'} and not randomize_prompt:
+                text_prompt = AIImage.style_polish_prompt(prompt_client, text_prompt, style_hint)
+
             if palette == 'bw':
                 text_prompt = f"{text_prompt}. {MONO_INSTRUCTIONS}"
             else:
@@ -211,6 +214,36 @@ class AIImage(BasePlugin):
 
         refined = AIImage._call_prompt_service(prompt_client, system_content, user_content, temperature=0.7)
         logger.info(f"Enhanced prompt: {refined}")
+        return refined
+
+    @staticmethod
+    def style_polish_prompt(prompt_client, prompt, style_hint):
+        if not prompt or not prompt.strip():
+            return prompt
+
+        style_configs = {
+            "van_gogh": (
+                "You are an art director converting a prompt into a vivid Vincent van Gogh style scene. Add motion, "
+                "lighting, and texture cues while preserving the subject. Limit to 35 words."
+            ),
+            "illustration": (
+                "You are an illustrator turning a prompt into a bold ink poster brief. Describe silhouettes, layout, "
+                "and contrast without adding new subjects. Keep under 35 words."
+            ),
+            "far_side": (
+                "You are a cartoonist adapting a prompt into a Far Side-inspired single-panel gag. Maintain the "
+                "subject, introduce dry humour, and outline the scene in under 35 words without dialogue."
+            ),
+        }
+
+        system_content = style_configs.get(
+            style_hint,
+            "You enhance prompts with concise art direction while preserving the subject.",
+        )
+        user_content = f"Original prompt: \"{prompt.strip()}\"\nRewrite it following your guidance."
+
+        refined = AIImage._call_prompt_service(prompt_client, system_content, user_content, temperature=0.8)
+        logger.info("Style polish (%s): %s", style_hint, refined)
         return refined
 
     @staticmethod
