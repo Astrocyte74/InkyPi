@@ -487,7 +487,7 @@ class TelegramBotListener:
             logger.exception("Failed to update Telegram message during generation.")
 
         try:
-            image = self._generate_ai_image(request)
+            image, send_photo_fn = self._generate_ai_image(request)
         except Exception as exc:
             logger.exception("AI generation failed: %s", exc)
             self._send_message(request["chat_id"], f"Failed to generate image: {exc}")
@@ -495,7 +495,12 @@ class TelegramBotListener:
             return
 
         caption = f"✅ Image generated with {dict(self.AI_MODELS)[request['model']]} ({request['quality']})"
-        self._send_photo(request["chat_id"], image, caption=caption)
+        threading.Thread(
+            target=send_photo_fn,
+            args=(caption,),
+            name=f"TelegramPhoto-{request_id}",
+            daemon=True,
+        ).start()
         self._cancel_ai_request(request_id, status_text="Completed.")
 
     def _cancel_ai_request(self, request_id, status_text="Cancelled."):
@@ -560,8 +565,15 @@ class TelegramBotListener:
         self.device_config.refresh_info = refresh_info
         self.device_config.write_config()
 
-        self._save_image(image)
-        return image
+        saved_image = self._save_image(image)
+
+        def send_photo(caption=None):
+            try:
+                self._send_photo(request.get("chat_id"), saved_image, caption=caption)
+            except Exception:
+                logger.exception("Failed to send photo back to Telegram")
+
+        return image, send_photo
 
     def _send_photo(self, chat_id, image, caption=None):
         buffer = BytesIO()
