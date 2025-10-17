@@ -390,15 +390,22 @@ class TelegramBotListener:
                 self._refresh_text_message(request)
                 self._answer_callback(callback_query["id"], text=f"Background: {label}")
             elif action == "confirm":
-                request["locked"] = True
-                self._refresh_text_message(request, status="Rendering…")
-                self._answer_callback(callback_query["id"], text="Rendering text…")
-                threading.Thread(
-                    target=self._process_text_request,
-                    args=(request_id,),
-                    name=f"TelegramText-{request_id}",
-                    daemon=True,
-                ).start()
+                if request.get("background") == "custom_ai":
+                    request["locked"] = True
+                    self.text_flow.mark_custom_background_pending(request)
+                    self._refresh_text_message(request, status="Select background image options…")
+                    self._answer_callback(callback_query["id"], text="Configure background image…")
+                    self._start_custom_background_flow(request)
+                else:
+                    request["locked"] = True
+                    self._refresh_text_message(request, status="Rendering…")
+                    self._answer_callback(callback_query["id"], text="Rendering text…")
+                    threading.Thread(
+                        target=self._process_text_request,
+                        args=(request_id,),
+                        name=f"TelegramText-{request_id}",
+                        daemon=True,
+                    ).start()
             elif action == "cancel":
                 self._refresh_text_message(request, status="Cancelled.")
                 self.text_flow.cancel_request(request_id)
@@ -408,7 +415,7 @@ class TelegramBotListener:
         else:
             self._answer_callback(callback_query["id"])
 
-    def _init_ai_prompt(self, chat_id, prompt):
+    def _init_ai_prompt(self, chat_id, prompt, source_text_request_id=None):
         prompt = prompt.strip()
         if not prompt:
             self._send_message(chat_id, "Prompt cannot be empty.")
@@ -426,6 +433,7 @@ class TelegramBotListener:
             "palette": "spectra6",
             "message_id": None,
             "locked": False,
+            "source_text_request_id": source_text_request_id,
         }
         self._set_style(request, "none")
         self.pending_requests[request_id] = request
@@ -460,6 +468,12 @@ class TelegramBotListener:
             },
         )
         self.text_flow.set_message_id(request["id"], response["result"]["message_id"])
+
+    def _start_custom_background_flow(self, text_request):
+        prompt = text_request["text"].strip()
+        if not prompt:
+            prompt = "Background"
+        self._init_ai_prompt(text_request["chat_id"], prompt, source_text_request_id=text_request["id"])
 
     def _cycle_model(self, request):
         model_values = [m[0] for m in self.AI_MODELS]
@@ -509,8 +523,11 @@ class TelegramBotListener:
         quality_label = request["quality"].capitalize()
         style_label = self.STYLE_LABELS.get(request.get("style", "none"), "None")
         palette_label = self._get_palette_label(request["palette"])
+        header = "🎨 AI Image Prompt"
+        if request.get("source_text_request_id"):
+            header = "🖼 Background Image"
         lines = [
-            "🎨 AI Image Prompt",
+            header,
             "",
             f"Prompt: {request['prompt']}",
             f"Model: {model_label}",
@@ -601,21 +618,56 @@ class TelegramBotListener:
             logger.exception("Failed to update Telegram message during generation.")
 
         try:
-            send_photo_fn, finalize_fn = self._generate_ai_image(request)
+            send_photo_fn, finalize_fn, saved_path = self._generate_ai_image(request)
         except Exception as exc:
             logger.exception("AI generation failed: %s", exc)
             self._send_message(request["chat_id"], f"Failed to generate image: {exc}")
+            source_text_id = request.get("source_text_request_id")
+            if source_text_id:
+                text_request = self.text_flow.get_request(source_text_id)
+                if text_request:
+                    text_request["locked"] = False
+                    text_request["awaiting_background"] = False
+                    text_request["custom_background"] = None
+                    try:
+                        self._refresh_text_message(text_request, status="Background failed. Adjust options.")
+                    except Exception:
+                        logger.exception("Failed to update text message after background error.")
             self._cancel_ai_request(request_id, status_text="Failed.")
             return
 
+        source_text_id = request.get("source_text_request_id")
+        if source_text_id:
+            caption = "✅ Background image ready"
+            threading.Thread(
+                target=send_photo_fn,
+                args=(caption,),
+                name=f"TelegramPhotoBG-{request_id}",
+                daemon=True,
+            ).start()
+
+            text_request = self.text_flow.attach_custom_background(source_text_id, saved_path)
+            if not text_request:
+                self._send_message(request["chat_id"], "Background saved, but original text request expired.")
+            else:
+                self._refresh_text_message(text_request, status="Background ready. Rendering…")
+                threading.Thread(
+                    target=self._process_text_request,
+                    args=(source_text_id,),
+                    name=f"TelegramTextFinalize-{source_text_id}",
+                    daemon=True,
+                ).start()
+
+            self._cancel_ai_request(request_id, status_text="Background saved.")
+            return
+
         caption = f"✅ Image generated with {dict(self.AI_MODELS)[request['model']]} ({request['quality']})"
-        send_thread = threading.Thread(
+        threading.Thread(
             target=send_photo_fn,
             args=(caption,),
             name=f"TelegramPhoto-{request_id}",
             daemon=True,
-        )
-        send_thread.start()
+        ).start()
 
         try:
             finalize_fn()
@@ -656,6 +708,19 @@ class TelegramBotListener:
         request = self.pending_requests.pop(request_id, None)
         if not request:
             return
+
+        source_text_id = request.get("source_text_request_id")
+        if source_text_id:
+            text_request = self.text_flow.get_request(source_text_id)
+            if text_request:
+                if status_text not in {"Background saved."}:
+                    text_request["locked"] = False
+                    text_request["awaiting_background"] = False
+                    text_request["custom_background"] = None
+                    try:
+                        self._refresh_text_message(text_request, status=status_text)
+                    except Exception:
+                        logger.exception("Failed to update text message after cancelling background request.")
 
         try:
             data = {
@@ -724,7 +789,7 @@ class TelegramBotListener:
             self.device_config.refresh_info = refresh_info
             self.device_config.write_config()
 
-        return send_photo, finalize
+        return send_photo, finalize, saved_path
 
     def _send_photo(self, chat_id, image, caption=None):
         buffer = BytesIO()

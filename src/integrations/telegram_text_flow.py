@@ -26,7 +26,8 @@ class TelegramTextFlow:
     BACKGROUND_OPTIONS = [
         ("none", "None"),
         ("latest", "Latest Display"),
-        ("ai_image", "AI Image"),
+        ("ai_image", "Auto AI Image"),
+        ("custom_ai", "Custom AI Image…"),
     ]
 
     def __init__(self, device_config, display_manager, refresh_task, storage_dir):
@@ -51,6 +52,8 @@ class TelegramTextFlow:
             "background": "none",
             "message_id": None,
             "locked": False,
+            "awaiting_background": False,
+            "custom_background": None,
         }
         self.requests[request_id] = data
         return data
@@ -71,6 +74,11 @@ class TelegramTextFlow:
     def format_summary(self, request, status=None):
         style_label = dict(self.STYLE_OPTIONS).get(request.get("style"), request.get("style"))
         background_label = dict(self.BACKGROUND_OPTIONS).get(request.get("background"), request.get("background"))
+        if request.get("background") == "custom_ai":
+            if request.get("awaiting_background"):
+                background_label = "Custom AI (configure)"
+            elif request.get("custom_background"):
+                background_label = "Custom AI ✅"
         rewrite_label = "On" if request.get("rewrite") else "Off"
         lines = [
             "📝 Telegram Text",
@@ -90,6 +98,24 @@ class TelegramTextFlow:
         style_label = dict(self.STYLE_OPTIONS).get(request["style"], request["style"])
         rewrite_label = "On" if request["rewrite"] else "Off"
         background_label = dict(self.BACKGROUND_OPTIONS).get(request["background"], request["background"])
+
+        if request.get("background") == "custom_ai":
+            if request.get("awaiting_background"):
+                background_label = "Custom AI (configure)"
+            elif request.get("custom_background"):
+                background_label = "Custom AI ✅"
+
+        if request.get("awaiting_background"):
+            return {
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": "✖️ Cancel",
+                            "callback_data": f"txt|{request_id}|cancel",
+                        }
+                    ]
+                ]
+            }
 
         keyboard = [
             [
@@ -137,6 +163,21 @@ class TelegramTextFlow:
         keys = [value for value, _ in self.BACKGROUND_OPTIONS]
         current_index = keys.index(request["background"])
         request["background"] = keys[(current_index + 1) % len(keys)]
+        if request["background"] != "custom_ai":
+            request["awaiting_background"] = False
+            request["custom_background"] = None
+
+    def mark_custom_background_pending(self, request):
+        request["awaiting_background"] = True
+        request["custom_background"] = None
+
+    def attach_custom_background(self, request_id, background_path):
+        request = self.requests.get(request_id)
+        if not request:
+            return None
+        request["custom_background"] = background_path
+        request["awaiting_background"] = False
+        return request
 
     # --- Final rendering ---------------------------------------------------
 
@@ -161,6 +202,10 @@ class TelegramTextFlow:
                 logger.warning("Latest display image not found; using solid background.")
         elif background_mode == "ai_image":
             background_path = self._generate_ai_background(final_text)
+        elif background_mode == "custom_ai":
+            background_path = request.get("custom_background")
+            if not background_path:
+                raise RuntimeError("Custom background not ready yet.")
 
         image = self._render_text_image(final_text, request.get("style"), background_path)
         saved_path = self._save_image(image)
