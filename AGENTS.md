@@ -20,3 +20,8 @@ Recent history uses Conventional Commits (`feat:`, `fix:`, etc.); keep subject l
 
 ## Security & Configuration Tips
 Store API credentials in a root-level `.env` as outlined in `docs/api_keys.md`, and never commit those files. When changing default resolutions or orientation, update `config/device_dev.json` alongside the production config to keep dev parity. For new third-party services, document required keys and usage limits before merging.
+
+## Deployment Layout
+- Git-managed source lives at `/home/mcdarby/InkyPi`; run all commits, merges, and edits there.
+- The installer sets up `/usr/local/inkypi` with a virtualenv and service files, and links `src/` back to the repo checkout, so edits flow straight into the running app.
+- After changing Python modules, restart the service to reload code: `sudo systemctl restart inkypi`.
