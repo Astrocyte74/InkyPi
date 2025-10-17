@@ -261,6 +261,7 @@ class TelegramBotListener:
             request["randomize"] = not request["randomize"]
             if request["randomize"]:
                 request["creative"] = False
+                request["van_gogh"] = False
             self._refresh_ai_message(request)
             status = "on" if request["randomize"] else "off"
             self._answer_callback(callback_query["id"], text=f"Randomize {status}.")
@@ -268,11 +269,15 @@ class TelegramBotListener:
             request["creative"] = not request["creative"]
             if request["creative"]:
                 request["randomize"] = False
+                request["van_gogh"] = False
             self._refresh_ai_message(request)
             status = "on" if request["creative"] else "off"
             self._answer_callback(callback_query["id"], text=f"Creative enhance {status}.")
         elif action == "toggle_vangogh":
             request["van_gogh"] = not request["van_gogh"]
+            if request["van_gogh"]:
+                request["randomize"] = False
+                request["creative"] = False
             self._refresh_ai_message(request)
             status = "on" if request["van_gogh"] else "off"
             self._answer_callback(callback_query["id"], text=f"Van Gogh style {status}.")
@@ -354,20 +359,23 @@ class TelegramBotListener:
     def _format_ai_summary(self, request, status=None):
         model_label = dict(self.AI_MODELS)[request["model"]]
         quality_label = request["quality"].capitalize()
-        randomize_label = "on" if request["randomize"] else "off"
-        creative_label = "on" if request["creative"] else "off"
+        if request["van_gogh"]:
+            style_label = "Van Gogh"
+        elif request["randomize"]:
+            style_label = "Randomize"
+        elif request["creative"]:
+            style_label = "Creative enhance"
+        else:
+            style_label = "None"
         palette_label = "Spectra 6" if request["palette"] == "spectra6" else "Monochrome"
-        vangogh_label = "on" if request["van_gogh"] else "off"
         lines = [
             "🎨 AI Image Prompt",
             "",
             f"Prompt: {request['prompt']}",
             f"Model: {model_label}",
             f"Quality: {quality_label}",
-            f"Randomize: {randomize_label}",
-            f"Creative enhance: {creative_label}",
+            f"Style: {style_label}",
             f"Palette: {palette_label}",
-            f"Van Gogh style: {vangogh_label}",
         ]
         if status:
             lines.extend(["", status])
@@ -375,7 +383,9 @@ class TelegramBotListener:
 
     def _build_ai_keyboard(self, request_id, request):
         quality_text = request["quality"].capitalize()
-        randomize_text = "Randomize: on" if request["randomize"] else "Randomize: off"
+        randomize_text = "Randomize ✅" if request["randomize"] else "Randomize"
+        creative_text = "Creative ✅" if request["creative"] else "Creative"
+        vangogh_text = "Van Gogh ✅" if request["van_gogh"] else "Van Gogh"
         model_label = dict(self.AI_MODELS)[request["model"]]
         return {
             "inline_keyboard": [
@@ -395,11 +405,11 @@ class TelegramBotListener:
                         "callback_data": f"ai|{request_id}|toggle_randomize",
                     },
                     {
-                        "text": f"Creative: {'on' if request['creative'] else 'off'}",
+                        "text": creative_text,
                         "callback_data": f"ai|{request_id}|toggle_creative",
                     },
                     {
-                        "text": f"Van Gogh: {'on' if request['van_gogh'] else 'off'}",
+                        "text": vangogh_text,
                         "callback_data": f"ai|{request_id}|toggle_vangogh",
                     },
                 ],
