@@ -569,7 +569,8 @@ class TelegramBotListener:
 
         def send_photo(caption=None):
             try:
-                self._send_photo(request.get("chat_id"), saved_image, caption=caption)
+                with Image.open(saved_image) as img:
+                    self._send_photo(request.get("chat_id"), img, caption=caption)
             except Exception:
                 logger.exception("Failed to send photo back to Telegram")
 
