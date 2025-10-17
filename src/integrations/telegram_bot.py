@@ -259,9 +259,23 @@ class TelegramBotListener:
             self._answer_callback(callback_query["id"], text="Quality updated.")
         elif action == "toggle_randomize":
             request["randomize"] = not request["randomize"]
+            if request["randomize"]:
+                request["creative"] = False
             self._refresh_ai_message(request)
             status = "on" if request["randomize"] else "off"
             self._answer_callback(callback_query["id"], text=f"Randomize {status}.")
+        elif action == "toggle_creative":
+            request["creative"] = not request["creative"]
+            if request["creative"]:
+                request["randomize"] = False
+            self._refresh_ai_message(request)
+            status = "on" if request["creative"] else "off"
+            self._answer_callback(callback_query["id"], text=f"Creative enhance {status}.")
+        elif action == "cycle_palette":
+            self._cycle_palette(request)
+            self._refresh_ai_message(request)
+            palette_label = "Spectra 6" if request["palette"] == "spectra6" else "Monochrome"
+            self._answer_callback(callback_query["id"], text=f"Palette: {palette_label}.")
         elif action == "generate":
             self._answer_callback(callback_query["id"], text="Generating image…")
             request["locked"] = True
@@ -293,6 +307,8 @@ class TelegramBotListener:
             "model": model,
             "quality": quality,
             "randomize": False,
+            "creative": False,
+            "palette": "spectra6",
             "message_id": None,
             "locked": False,
         }
@@ -326,10 +342,15 @@ class TelegramBotListener:
         idx = (idx + 1) % len(allowed_quality)
         request["quality"] = allowed_quality[idx]
 
+    def _cycle_palette(self, request):
+        request["palette"] = "bw" if request["palette"] == "spectra6" else "spectra6"
+
     def _format_ai_summary(self, request, status=None):
         model_label = dict(self.AI_MODELS)[request["model"]]
         quality_label = request["quality"].capitalize()
         randomize_label = "on" if request["randomize"] else "off"
+        creative_label = "on" if request["creative"] else "off"
+        palette_label = "Spectra 6" if request["palette"] == "spectra6" else "Monochrome"
         lines = [
             "🎨 AI Image Prompt",
             "",
@@ -337,6 +358,8 @@ class TelegramBotListener:
             f"Model: {model_label}",
             f"Quality: {quality_label}",
             f"Randomize: {randomize_label}",
+            f"Creative enhance: {creative_label}",
+            f"Palette: {palette_label}",
         ]
         if status:
             lines.extend(["", status])
@@ -362,6 +385,16 @@ class TelegramBotListener:
                     {
                         "text": randomize_text,
                         "callback_data": f"ai|{request_id}|toggle_randomize",
+                    },
+                    {
+                        "text": f"Creative: {'on' if request['creative'] else 'off'}",
+                        "callback_data": f"ai|{request_id}|toggle_creative",
+                    },
+                ],
+                [
+                    {
+                        "text": f"Palette: {'Spectra 6' if request['palette'] == 'spectra6' else 'Monochrome'}",
+                        "callback_data": f"ai|{request_id}|cycle_palette",
                     }
                 ],
                 [
@@ -440,6 +473,8 @@ class TelegramBotListener:
             "imageModel": request["model"],
             "quality": request["quality"],
             "randomizePrompt": "true" if request["randomize"] else "false",
+            "creativeEnhance": "true" if request["creative"] else "false",
+            "palette": request["palette"],
         }
 
         image = plugin.generate_image(settings, self.device_config)

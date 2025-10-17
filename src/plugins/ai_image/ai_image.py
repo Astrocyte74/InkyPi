@@ -12,6 +12,20 @@ IMAGE_MODELS = ["dall-e-3", "dall-e-2", "gpt-image-1"]
 DEFAULT_IMAGE_MODEL = "dall-e-3"
 DEFAULT_IMAGE_QUALITY = "standard"
 
+SPECTRA6_INSTRUCTIONS = (
+    "Generate a flat, high-contrast illustration sized 800x480 pixels using only black, white, red, green, blue, "
+    "and yellow. The style must be poster-like with bold shapes, clean colour blocks, and no gradients or fine "
+    "textures. Avoid subtle shading, soft edges, or photographic detail. This image will be displayed on a Spectra 6 "
+    "e-ink panel with a limited colour gamut and slow refresh."
+)
+
+MONO_INSTRUCTIONS = (
+    "Generate a flat, high-contrast black-and-white illustration sized 800x480 pixels. Use only pure black and pure "
+    "white (no greys or gradients). Emphasise bold shapes, clear separation between light and dark areas, and avoid "
+    "fine lines, soft textures, or photographic detail. The image will be displayed on a monochrome e-ink panel with "
+    "a slow refresh rate."
+)
+
 class AIImage(BasePlugin):
     def generate_settings_template(self):
         template_params = super().generate_settings_template()
@@ -35,12 +49,24 @@ class AIImage(BasePlugin):
             raise RuntimeError("Invalid Image Model provided.")
         image_quality = settings.get('quality', "medium" if image_model == "gpt-image-1" else "standard")
         randomize_prompt = settings.get('randomizePrompt') == 'true'
+        creative_enhance = settings.get('creativeEnhance') == 'true'
+        palette = settings.get('palette', 'spectra6').lower()
 
         image = None
         try:
             ai_client = OpenAI(api_key = api_key)
             if randomize_prompt:
                 text_prompt = AIImage.fetch_image_prompt(ai_client, text_prompt)
+                if creative_enhance:
+                    text_prompt = AIImage.enhance_prompt(ai_client, text_prompt)
+            elif creative_enhance:
+                text_prompt = AIImage.enhance_prompt(ai_client, text_prompt)
+
+            if palette == 'bw':
+                text_prompt = f"{text_prompt}. {MONO_INSTRUCTIONS}"
+            else:
+                # default to spectra 6 instructions
+                text_prompt = f"{text_prompt}. {SPECTRA6_INSTRUCTIONS}"
 
             image = AIImage.fetch_image(
                 ai_client,
@@ -145,3 +171,31 @@ class AIImage(BasePlugin):
         prompt = response.choices[0].message.content.strip()
         logger.info(f"Generated random image prompt: {prompt}")
         return prompt
+
+    @staticmethod
+    def enhance_prompt(ai_client, prompt):
+        logger.info("Enhancing image prompt for richer detail.")
+        if not prompt or not prompt.strip():
+            return prompt
+
+        response = ai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You rewrite image prompts to make them more descriptive and cinematic while preserving the "
+                        "core subject. Add lighting, composition, mood, and stylistic cues suited for poster art. "
+                        "Keep the result under 40 words. Do not introduce new subjects. Return only the refined prompt."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": f"Refine this prompt for an illustration: \"{prompt}\""
+                }
+            ],
+            temperature=0.7
+        )
+        refined = response.choices[0].message.content.strip()
+        logger.info(f"Enhanced prompt: {refined}")
+        return refined
