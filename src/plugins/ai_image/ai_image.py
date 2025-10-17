@@ -5,6 +5,7 @@ from io import BytesIO
 import base64
 import requests
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,18 @@ class AIImage(BasePlugin):
         }
         return template_params
 
+    def _get_prompt_client(self, device_config, openai_client):
+        open_router_key = device_config.load_env_key("OPEN_ROUTER_SECRET")
+        if open_router_key:
+            return {
+                "type": "openrouter",
+                "api_key": open_router_key,
+                "model": device_config.load_env_key("OPEN_ROUTER_MODEL") or "google/gemini-2.5-flash-lite",
+                "referer": device_config.load_env_key("OPEN_ROUTER_REFERRER") or "https://github.com/fatihak/InkyPi",
+                "title": device_config.load_env_key("OPEN_ROUTER_TITLE") or "InkyPi"
+            }
+        return {"type": "openai", "client": openai_client}
+
     def generate_image(self, settings, device_config):
 
         api_key = device_config.load_env_key("OPEN_AI_SECRET")
@@ -74,12 +87,13 @@ class AIImage(BasePlugin):
         image = None
         try:
             ai_client = OpenAI(api_key = api_key)
+            prompt_client = self._get_prompt_client(device_config, ai_client)
             if randomize_prompt:
-                text_prompt = AIImage.fetch_image_prompt(ai_client, text_prompt)
+                text_prompt = AIImage.fetch_image_prompt(prompt_client, text_prompt)
                 if creative_enhance:
-                    text_prompt = AIImage.enhance_prompt(ai_client, text_prompt)
+                    text_prompt = AIImage.enhance_prompt(prompt_client, text_prompt)
             elif creative_enhance:
-                text_prompt = AIImage.enhance_prompt(ai_client, text_prompt)
+                text_prompt = AIImage.enhance_prompt(prompt_client, text_prompt)
 
             if palette == 'bw':
                 text_prompt = f"{text_prompt}. {MONO_INSTRUCTIONS}"
@@ -87,7 +101,7 @@ class AIImage(BasePlugin):
                 # default to spectra 6 instructions
                 text_prompt = f"{text_prompt}. {SPECTRA6_INSTRUCTIONS}"
 
-            if van_gogh_style:
+            if van_gogh_style or style_hint == 'van_gogh':
                 text_prompt = f"{text_prompt}. {VAN_GOGH_INSTRUCTIONS}"
             elif style_hint == 'illustration':
                 text_prompt = f"{text_prompt}. {ILLUSTRATION_INSTRUCTIONS}"
@@ -142,7 +156,7 @@ class AIImage(BasePlugin):
         return img
 
     @staticmethod
-    def fetch_image_prompt(ai_client, from_prompt=None):
+    def fetch_image_prompt(prompt_client, from_prompt=None):
         logger.info(f"Getting random image prompt...")
 
         system_content = (
@@ -178,50 +192,93 @@ class AIImage(BasePlugin):
                 "Avoid changing the subject of the prompt."
             )
 
-        # Make the API call
-        response = ai_client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_content
-                },
-                {
-                    "role": "user",
-                    "content": user_content
-                }
-            ],
-            temperature=1
-        )
-
-        prompt = response.choices[0].message.content.strip()
+        prompt = AIImage._call_prompt_service(prompt_client, system_content, user_content, temperature=1)
         logger.info(f"Generated random image prompt: {prompt}")
         return prompt
 
     @staticmethod
-    def enhance_prompt(ai_client, prompt):
+    def enhance_prompt(prompt_client, prompt):
         logger.info("Enhancing image prompt for richer detail.")
         if not prompt or not prompt.strip():
             return prompt
 
+        system_content = (
+            "You rewrite image prompts to make them more descriptive and cinematic while preserving the "
+            "core subject. Add lighting, composition, mood, and stylistic cues suited for poster art. "
+            "Keep the result under 40 words. Do not introduce new subjects. Return only the refined prompt."
+        )
+        user_content = f"Refine this prompt for an illustration: \"{prompt}\""
+
+        refined = AIImage._call_prompt_service(prompt_client, system_content, user_content, temperature=0.7)
+        logger.info(f"Enhanced prompt: {refined}")
+        return refined
+
+    @staticmethod
+    def _call_prompt_service(prompt_client, system_content, user_content, temperature=0.7):
+        client_type = prompt_client.get("type")
+        if client_type == "openrouter":
+            return AIImage._call_openrouter(prompt_client, system_content, user_content, temperature)
+        elif client_type == "openai":
+            return AIImage._call_openai(prompt_client["client"], system_content, user_content, temperature)
+        else:
+            raise RuntimeError("Unsupported prompt client configuration.")
+
+    @staticmethod
+    def _call_openai(ai_client, system_content, user_content, temperature):
         response = ai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You rewrite image prompts to make them more descriptive and cinematic while preserving the "
-                        "core subject. Add lighting, composition, mood, and stylistic cues suited for poster art. "
-                        "Keep the result under 40 words. Do not introduce new subjects. Return only the refined prompt."
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": f"Refine this prompt for an illustration: \"{prompt}\""
-                }
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_content},
             ],
-            temperature=0.7
+            temperature=temperature,
         )
-        refined = response.choices[0].message.content.strip()
-        logger.info(f"Enhanced prompt: {refined}")
-        return refined
+        return response.choices[0].message.content.strip()
+
+    @staticmethod
+    def _call_openrouter(prompt_client, system_content, user_content, temperature):
+        headers = {
+            "Authorization": f"Bearer {prompt_client['api_key']}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        referer = prompt_client.get("referer")
+        title = prompt_client.get("title")
+        if referer:
+            headers["HTTP-Referer"] = referer
+        if title:
+            headers["X-Title"] = title
+
+        payload = {
+            "model": prompt_client.get("model", "google/gemini-2.5-flash-lite"),
+            "messages": [
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_content},
+            ],
+            "temperature": temperature,
+        }
+
+        try:
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except requests.RequestException as exc:
+            logger.error("OpenRouter request failed: %s", exc)
+            raise RuntimeError("OpenRouter request failure, please check logs.") from exc
+
+        try:
+            choice = data["choices"][0]
+            message = choice["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            logger.error("Unexpected OpenRouter response format: %s", data)
+            raise RuntimeError("OpenRouter response parsing error, please check logs.") from exc
+
+        if isinstance(message, list):
+            message = "".join(segment.get("text", "") for segment in message)
+
+        return str(message).strip()

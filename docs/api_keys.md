@@ -95,3 +95,16 @@ Optional for remote updates via Telegram.
     ```
 - Restart the InkyPi service: `sudo systemctl restart inkypi.service`
 - If `TELEGRAM_ALLOWED_IDS` is empty, the bot responds to any chat. Add your personal ID to restrict usage.
+
+## OpenRouter Key
+
+Optional for using OpenRouter-compatible text models when randomising or enhancing prompts.
+
+- Create an account and API key at [OpenRouter](https://openrouter.ai/).
+- Add the key to `/usr/local/inkypi/.env`:
+    ```
+    OPEN_ROUTER_SECRET=your-openrouter-key
+    OPEN_ROUTER_MODEL=google/gemini-2.5-flash-lite   # optional override
+    ```
+- Restart the InkyPi service: `sudo systemctl restart inkypi.service`
+- When set, InkyPi uses the specified OpenRouter model for prompt rewriting; image generation still uses OpenAI's image API.
