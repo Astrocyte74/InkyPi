@@ -487,7 +487,7 @@ class TelegramBotListener:
             logger.exception("Failed to update Telegram message during generation.")
 
         try:
-            image, send_photo_fn = self._generate_ai_image(request)
+            send_photo_fn, finalize_fn = self._generate_ai_image(request)
         except Exception as exc:
             logger.exception("AI generation failed: %s", exc)
             self._send_message(request["chat_id"], f"Failed to generate image: {exc}")
@@ -495,13 +495,18 @@ class TelegramBotListener:
             return
 
         caption = f"✅ Image generated with {dict(self.AI_MODELS)[request['model']]} ({request['quality']})"
-        threading.Thread(
+        send_thread = threading.Thread(
             target=send_photo_fn,
             args=(caption,),
             name=f"TelegramPhoto-{request_id}",
             daemon=True,
-        ).start()
-        self._cancel_ai_request(request_id, status_text="Completed.")
+        )
+        send_thread.start()
+
+        try:
+            finalize_fn()
+        finally:
+            self._cancel_ai_request(request_id, status_text="Completed.")
 
     def _cancel_ai_request(self, request_id, status_text="Cancelled."):
         request = self.pending_requests.pop(request_id, None)
@@ -549,32 +554,33 @@ class TelegramBotListener:
             settings["styleHint"] = "far_side"
 
         image = plugin.generate_image(settings, self.device_config)
-        self.display_manager.display_image(image, image_settings=plugin_config.get("image_settings", []))
-        current_dt = (
-            self.refresh_task._get_current_datetime()
-            if hasattr(self.refresh_task, "_get_current_datetime")
-            else datetime.utcnow()
-        )
-        image_hash = compute_image_hash(image)
-        refresh_info = RefreshInfo(
-            refresh_type="Telegram AI",
-            plugin_id="ai_image",
-            refresh_time=current_dt.isoformat(),
-            image_hash=image_hash,
-        )
-        self.device_config.refresh_info = refresh_info
-        self.device_config.write_config()
-
-        saved_image = self._save_image(image)
+        saved_path = self._save_image(image)
 
         def send_photo(caption=None):
             try:
-                with Image.open(saved_image) as img:
+                with Image.open(saved_path) as img:
                     self._send_photo(request.get("chat_id"), img, caption=caption)
             except Exception:
                 logger.exception("Failed to send photo back to Telegram")
 
-        return image, send_photo
+        def finalize():
+            self.display_manager.display_image(image, image_settings=plugin_config.get("image_settings", []))
+            current_dt = (
+                self.refresh_task._get_current_datetime()
+                if hasattr(self.refresh_task, "_get_current_datetime")
+                else datetime.utcnow()
+            )
+            image_hash = compute_image_hash(image)
+            refresh_info = RefreshInfo(
+                refresh_type="Telegram AI",
+                plugin_id="ai_image",
+                refresh_time=current_dt.isoformat(),
+                image_hash=image_hash,
+            )
+            self.device_config.refresh_info = refresh_info
+            self.device_config.write_config()
+
+        return send_photo, finalize
 
     def _send_photo(self, chat_id, image, caption=None):
         buffer = BytesIO()
