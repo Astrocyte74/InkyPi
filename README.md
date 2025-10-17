@@ -108,6 +108,22 @@ To update your InkyPi with the latest code changes, follow these steps:
     ```
 This process ensures that any new updates, including code changes and additional dependencies, are properly applied without requiring a full reinstallation.
 
+## Telegram Remote Control
+
+With InkyPi running, you can push images from your phone via Telegram:
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
+2. Add the following to `/usr/local/inkypi/.env`:
+    ```
+    TELEGRAM_BOT_TOKEN=123456:ABC-your-bot-token
+    TELEGRAM_ALLOWED_IDS=123456789   # optional, comma-separated list
+    ```
+3. Restart the service: `sudo systemctl restart inkypi.service`.
+4. Send a photo to the bot — the latest image is saved under `mock_display_output/telegram/latest.png`.  
+   Use `/status` in chat to have the bot reply with the current preview.
+
+When `TELEGRAM_ALLOWED_IDS` is blank, the bot accepts messages from any chat the bot is added to. For extra safety, add your personal Telegram user ID (or group chat ID) so only those senders can trigger updates.
+
 ## Uninstall
 To uninstall InkyPi, simply run the following command:
 

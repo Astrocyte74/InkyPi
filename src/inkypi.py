@@ -22,6 +22,7 @@ from werkzeug.serving import is_running_from_reloader
 from config import Config
 from display.display_manager import DisplayManager
 from refresh_task import RefreshTask
+from integrations.telegram_bot import TelegramBotListener
 from blueprints.main import main_bp
 from blueprints.settings import settings_bp
 from blueprints.plugin import plugin_bp
@@ -66,6 +67,29 @@ load_plugins(device_config.get_plugins())
 app.config['DEVICE_CONFIG'] = device_config
 app.config['DISPLAY_MANAGER'] = display_manager
 app.config['REFRESH_TASK'] = refresh_task
+telegram_bot = None
+
+telegram_token = device_config.load_env_key("TELEGRAM_BOT_TOKEN")
+if telegram_token:
+    raw_allowed_ids = device_config.load_env_key("TELEGRAM_ALLOWED_IDS") or ""
+    allowed_ids = {int(user_id.strip()) for user_id in raw_allowed_ids.split(",") if user_id.strip()}
+    try:
+        telegram_bot = TelegramBotListener(
+            token=telegram_token,
+            allowed_ids=allowed_ids,
+            device_config=device_config,
+            display_manager=display_manager,
+            refresh_task=refresh_task,
+        )
+        app.config['TELEGRAM_BOT'] = telegram_bot
+        logger.info(
+            "Telegram bot enabled%s",
+            f" for IDs {sorted(allowed_ids)}" if allowed_ids else " for all chats",
+        )
+    except Exception:
+        logger.exception("Failed to initialise Telegram bot listener")
+else:
+    logger.info("Telegram bot token not configured; skipping Telegram integration")
 
 # Set additional parameters
 app.config['MAX_FORM_PARTS'] = 10_000
@@ -77,6 +101,9 @@ app.register_blueprint(plugin_bp)
 app.register_blueprint(playlist_bp)
 
 if __name__ == '__main__':
+
+    if telegram_bot:
+        telegram_bot.start()
 
     # start the background refresh task
     refresh_task.start()
@@ -106,4 +133,6 @@ if __name__ == '__main__':
             
         serve(app, host="0.0.0.0", port=PORT, threads=1)
     finally:
+        if telegram_bot:
+            telegram_bot.stop()
         refresh_task.stop()

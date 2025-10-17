@@ -82,3 +82,16 @@ Required for the GitHub Plugin
     ```
     GITHUB_SECRET=your-key
     ```
+
+## Telegram Bot Token
+
+Optional for remote updates via Telegram.
+
+- Talk to [@BotFather](https://t.me/BotFather) to create a new bot and copy the token.
+- Add the token to `/usr/local/inkypi/.env`:
+    ```
+    TELEGRAM_BOT_TOKEN=123456:ABC-your-token
+    TELEGRAM_ALLOWED_IDS=123456789   # optional, comma-separated list of Telegram user IDs
+    ```
+- Restart the InkyPi service: `sudo systemctl restart inkypi.service`
+- If `TELEGRAM_ALLOWED_IDS` is empty, the bot responds to any chat. Add your personal ID to restrict usage.
