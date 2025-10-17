@@ -13,6 +13,7 @@ from PIL import Image
 from model import RefreshInfo
 from utils.image_utils import compute_image_hash
 from plugins.plugin_registry import get_plugin_instance
+from integrations.telegram_text_flow import TelegramTextFlow
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,7 @@ class TelegramBotListener:
         os.makedirs(self.storage_dir, exist_ok=True)
 
         self.pending_requests = {}
+        self.text_flow = TelegramTextFlow(self.device_config, self.display_manager, self.refresh_task, self.storage_dir)
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -178,6 +180,12 @@ class TelegramBotListener:
                 self._send_message(chat_id, "Usage: /ai <prompt>")
                 return
             self._init_ai_prompt(chat_id, prompt)
+        elif text.lower().startswith("/txt"):
+            message = text[4:].strip()
+            if not message:
+                self._send_message(chat_id, "Usage: /txt <message>")
+                return
+            self._init_text_prompt(chat_id, message)
         else:
             self._init_ai_prompt(chat_id, text)
 
@@ -281,73 +289,122 @@ class TelegramBotListener:
             return
 
         parts = data.split("|")
-        if len(parts) < 3 or parts[0] != "ai":
+        if len(parts) < 2:
             self._answer_callback(callback_query["id"])
             return
 
-        request_id = parts[1]
-        action = parts[2]
-        param = parts[3] if len(parts) > 3 else None
-        request = self.pending_requests.get(request_id)
-        if not request:
-            self._answer_callback(callback_query["id"], text="Request expired.")
-            return
-
-        self._ensure_style(request)
-        chat_id = request["chat_id"]
-
-        if request.get("locked") and action not in ("cancel",):
-            self._answer_callback(callback_query["id"], text="Processing, please wait…")
-            return
-
-        if action == "cycle_model":
-            self._cycle_model(request)
-            self._refresh_ai_message(request)
-            self._answer_callback(callback_query["id"], text="Model updated.")
-        elif action == "cycle_quality":
-            self._cycle_quality(request)
-            self._refresh_ai_message(request)
-            self._answer_callback(callback_query["id"], text="Quality updated.")
-        elif action in {"toggle_randomize", "toggle_creative", "toggle_vangogh"}:
-            # Backwards compatibility for older keyboards
-            mapping = {
-                "toggle_randomize": "randomize",
-                "toggle_creative": "creative",
-                "toggle_vangogh": "van_gogh",
-            }
-            new_style = mapping[action]
-            if request.get("style") == new_style:
-                self._set_style(request, "none")
-            else:
-                self._set_style(request, new_style)
-            self._refresh_ai_message(request)
-            label = self.STYLE_LABELS.get(request["style"], request["style"])  # type: ignore[index]
-            self._answer_callback(callback_query["id"], text=f"Style: {label}")
-        elif action == "style" and param:
-            if param not in self.STYLE_LABELS:
-                self._answer_callback(callback_query["id"], text="Unknown style.")
+        flow_type = parts[0]
+        if flow_type == "ai":
+            if len(parts) < 3:
+                self._answer_callback(callback_query["id"])
                 return
-            self._set_style(request, param)
-            self._refresh_ai_message(request)
-            label = self.STYLE_LABELS[param]
-            self._answer_callback(callback_query["id"], text=f"Style: {label}")
-        elif action == "cycle_palette":
-            self._cycle_palette(request)
-            self._refresh_ai_message(request)
-            palette_label = self._get_palette_label(request["palette"])
-            self._answer_callback(callback_query["id"], text=f"Palette: {palette_label}.")
-        elif action == "generate":
-            self._answer_callback(callback_query["id"], text="Generating image…")
-            request["locked"] = True
-            threading.Thread(
-                target=self._process_ai_generation,
-                args=(request_id,),
-                name=f"TelegramAI-{request_id}",
-                daemon=True,
-            ).start()
-        elif action == "cancel":
-            self._answer_callback(callback_query["id"], text="Cancelled.")
-            self._cancel_ai_request(request_id, status_text="Cancelled.")
+
+            request_id = parts[1]
+            action = parts[2]
+            param = parts[3] if len(parts) > 3 else None
+            request = self.pending_requests.get(request_id)
+            if not request:
+                self._answer_callback(callback_query["id"], text="Request expired.")
+                return
+
+            self._ensure_style(request)
+
+            if request.get("locked") and action not in ("cancel",):
+                self._answer_callback(callback_query["id"], text="Processing, please wait…")
+                return
+
+            if action == "cycle_model":
+                self._cycle_model(request)
+                self._refresh_ai_message(request)
+                self._answer_callback(callback_query["id"], text="Model updated.")
+            elif action == "cycle_quality":
+                self._cycle_quality(request)
+                self._refresh_ai_message(request)
+                self._answer_callback(callback_query["id"], text="Quality updated.")
+            elif action in {"toggle_randomize", "toggle_creative", "toggle_vangogh"}:
+                mapping = {
+                    "toggle_randomize": "randomize",
+                    "toggle_creative": "creative",
+                    "toggle_vangogh": "van_gogh",
+                }
+                new_style = mapping[action]
+                if request.get("style") == new_style:
+                    self._set_style(request, "none")
+                else:
+                    self._set_style(request, new_style)
+                self._refresh_ai_message(request)
+                label = self.STYLE_LABELS.get(request["style"], request["style"])  # type: ignore[index]
+                self._answer_callback(callback_query["id"], text=f"Style: {label}")
+            elif action == "style" and param:
+                if param not in self.STYLE_LABELS:
+                    self._answer_callback(callback_query["id"], text="Unknown style.")
+                    return
+                self._set_style(request, param)
+                self._refresh_ai_message(request)
+                label = self.STYLE_LABELS[param]
+                self._answer_callback(callback_query["id"], text=f"Style: {label}")
+            elif action == "cycle_palette":
+                self._cycle_palette(request)
+                self._refresh_ai_message(request)
+                palette_label = self._get_palette_label(request["palette"])
+                self._answer_callback(callback_query["id"], text=f"Palette: {palette_label}.")
+            elif action == "generate":
+                self._answer_callback(callback_query["id"], text="Generating image…")
+                request["locked"] = True
+                threading.Thread(
+                    target=self._process_ai_generation,
+                    args=(request_id,),
+                    name=f"TelegramAI-{request_id}",
+                    daemon=True,
+                ).start()
+            elif action == "cancel":
+                self._answer_callback(callback_query["id"], text="Cancelled.")
+                self._cancel_ai_request(request_id, status_text="Cancelled.")
+            else:
+                self._answer_callback(callback_query["id"])
+        elif flow_type == "txt":
+            request_id = parts[1]
+            action = parts[2] if len(parts) > 2 else None
+            request = self.text_flow.get_request(request_id)
+            if not request:
+                self._answer_callback(callback_query["id"], text="Text request expired.")
+                return
+
+            if request.get("locked") and action not in {"cancel"}:
+                self._answer_callback(callback_query["id"], text="Processing, please wait…")
+                return
+
+            if action == "cycle_style":
+                self.text_flow.cycle_style(request)
+                self._refresh_text_message(request)
+                label = dict(self.text_flow.STYLE_OPTIONS).get(request["style"], request["style"])
+                self._answer_callback(callback_query["id"], text=f"Style: {label}")
+            elif action == "toggle_rewrite":
+                self.text_flow.toggle_rewrite(request)
+                status = "On" if request["rewrite"] else "Off"
+                self._refresh_text_message(request)
+                self._answer_callback(callback_query["id"], text=f"Rewrite: {status}")
+            elif action == "cycle_background":
+                self.text_flow.cycle_background(request)
+                label = dict(self.text_flow.BACKGROUND_OPTIONS).get(request["background"], request["background"])
+                self._refresh_text_message(request)
+                self._answer_callback(callback_query["id"], text=f"Background: {label}")
+            elif action == "confirm":
+                request["locked"] = True
+                self._refresh_text_message(request, status="Rendering…")
+                self._answer_callback(callback_query["id"], text="Rendering text…")
+                threading.Thread(
+                    target=self._process_text_request,
+                    args=(request_id,),
+                    name=f"TelegramText-{request_id}",
+                    daemon=True,
+                ).start()
+            elif action == "cancel":
+                self._refresh_text_message(request, status="Cancelled.")
+                self.text_flow.cancel_request(request_id)
+                self._answer_callback(callback_query["id"], text="Cancelled.")
+            else:
+                self._answer_callback(callback_query["id"])
         else:
             self._answer_callback(callback_query["id"])
 
@@ -384,6 +441,25 @@ class TelegramBotListener:
             },
         )
         request["message_id"] = response["result"]["message_id"]
+
+    def _init_text_prompt(self, chat_id, message):
+        message = message.strip()
+        if not message:
+            self._send_message(chat_id, "Usage: /txt <message>")
+            return
+
+        request = self.text_flow.create_request(chat_id, message)
+        summary = self.text_flow.format_summary(request)
+        markup = self.text_flow.build_keyboard(request)
+        response = self._api_post(
+            "sendMessage",
+            data={
+                "chat_id": chat_id,
+                "text": summary,
+                "reply_markup": json.dumps(markup),
+            },
+        )
+        self.text_flow.set_message_id(request["id"], response["result"]["message_id"])
 
     def _cycle_model(self, request):
         model_values = [m[0] for m in self.AI_MODELS]
@@ -500,6 +576,20 @@ class TelegramBotListener:
         }
         self._api_post("editMessageText", data=data)
 
+    def _refresh_text_message(self, request, status=None):
+        summary = self.text_flow.format_summary(request, status=status)
+        if request.get("locked"):
+            markup = {"inline_keyboard": []}
+        else:
+            markup = self.text_flow.build_keyboard(request)
+        data = {
+            "chat_id": request["chat_id"],
+            "message_id": request["message_id"],
+            "text": summary,
+            "reply_markup": json.dumps(markup),
+        }
+        self._api_post("editMessageText", data=data)
+
     def _process_ai_generation(self, request_id):
         request = self.pending_requests.get(request_id)
         if not request:
@@ -531,6 +621,36 @@ class TelegramBotListener:
             finalize_fn()
         finally:
             self._cancel_ai_request(request_id, status_text="Completed.")
+
+    def _process_text_request(self, request_id):
+        request = self.text_flow.get_request(request_id)
+        if not request:
+            return
+
+        try:
+            result = self.text_flow.finalize(request)
+        except Exception as exc:
+            logger.exception("Telegram text generation failed: %s", exc)
+            request["locked"] = False
+            self._refresh_text_message(request, status="Failed. Adjust options and try again.")
+            self._send_message(request["chat_id"], f"Failed to render text: {exc}")
+            return
+
+        try:
+            self._refresh_text_message(request, status="Completed.")
+        except Exception:
+            logger.exception("Failed to update Telegram message after text rendering.")
+
+        image_path = result["image_path"]
+        caption = "✅ Text updated"
+        try:
+            with Image.open(image_path) as img:
+                self._send_photo(request["chat_id"], img, caption=caption)
+        except Exception:
+            logger.exception("Failed to send Telegram text preview.")
+            self._send_message(request["chat_id"], "Text displayed, but failed to send preview image.")
+
+        self.text_flow.cancel_request(request_id)
 
     def _cancel_ai_request(self, request_id, status_text="Cancelled."):
         request = self.pending_requests.pop(request_id, None)

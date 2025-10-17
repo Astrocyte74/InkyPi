@@ -122,6 +122,7 @@ With InkyPi running, you can push images from your phone via Telegram:
 4. Send a photo to the bot — the latest image is saved under `mock_display_output/telegram/latest.png`.  
    Use `/status` in chat to have the bot reply with the current preview.  
    Send plain text to open an interactive prompt where you can tweak model, quality, pick a style (None, Randomize, Creative Enhance, Van Gogh, Illustration, or Far Side), and choose colour or black & white palette guidance before generating an AI image.
+   Use `/txt <message>` to launch the Telegram text composer, pick a layout, optionally rewrite the note, and overlay it on a solid colour, the latest display, or a freshly generated AI background.
 
 When `TELEGRAM_ALLOWED_IDS` is blank, the bot accepts messages from any chat the bot is added to. For extra safety, add your personal Telegram user ID (or group chat ID) so only those senders can trigger updates.
 
