@@ -217,8 +217,19 @@ class AIImage(BasePlugin):
     def _call_prompt_service(prompt_client, system_content, user_content, temperature=0.7):
         client_type = prompt_client.get("type")
         if client_type == "openrouter":
+            logger.info(
+                "Prompt service: OpenRouter | model=%s | temperature=%.2f | user=%s",
+                prompt_client.get("model", "google/gemini-2.5-flash-lite"),
+                temperature,
+                AIImage._trim_text(user_content),
+            )
             return AIImage._call_openrouter(prompt_client, system_content, user_content, temperature)
         elif client_type == "openai":
+            logger.info(
+                "Prompt service: OpenAI gpt-4o | temperature=%.2f | user=%s",
+                temperature,
+                AIImage._trim_text(user_content),
+            )
             return AIImage._call_openai(prompt_client["client"], system_content, user_content, temperature)
         else:
             raise RuntimeError("Unsupported prompt client configuration.")
@@ -282,3 +293,10 @@ class AIImage(BasePlugin):
             message = "".join(segment.get("text", "") for segment in message)
 
         return str(message).strip()
+
+    @staticmethod
+    def _trim_text(text, max_length=120):
+        text = text.replace("\n", " ").strip()
+        if len(text) > max_length:
+            return text[: max_length - 3] + "..."
+        return text
