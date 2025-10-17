@@ -40,6 +40,7 @@ class TelegramBotListener:
         ("creative", "✨ Creative"),
         ("van_gogh", "🖌️ Van Gogh"),
         ("illustration", "✏️ Illustration"),
+        ("drawing", "📝 Drawing"),
         ("far_side", "🐄 Far Side"),
     ]
 
@@ -47,7 +48,7 @@ class TelegramBotListener:
         ("none",),
         ("randomize", "creative"),
         ("van_gogh", "illustration"),
-        ("far_side",),
+        ("drawing", "far_side"),
     ]
 
     STYLE_LABELS = {value: label for value, label in STYLE_OPTIONS}
@@ -537,6 +538,8 @@ class TelegramBotListener:
             settings["styleHint"] = "van_gogh"
         elif style == "illustration":
             settings["styleHint"] = "illustration"
+        elif style == "drawing":
+            settings["styleHint"] = "drawing"
         elif style == "far_side":
             settings["styleHint"] = "far_side"
 
