@@ -37,6 +37,11 @@ ILLUSTRATION_INSTRUCTIONS = (
     "screen-print or poster art. Prioritise readable silhouettes and strong contrast over fine detail."
 )
 
+DRAWING_INSTRUCTIONS = (
+    "Render as a pencil sketch with visible strokes, cross-hatching, and minimal shading. Keep the composition clean "
+    "with strong contours and mid-tone textures suited for monochrome reproduction."
+)
+
 FAR_SIDE_INSTRUCTIONS = (
     "Illustrate as a single-panel Far Side-inspired cartoon with thick outlines, simple backgrounds, and dry humour. "
     "Use minimal text (preferably none), anthropomorphic characters, and avoid clutter or heavy shading."
@@ -105,6 +110,8 @@ class AIImage(BasePlugin):
                 text_prompt = f"{text_prompt}. {VAN_GOGH_INSTRUCTIONS}"
             elif style_hint == 'illustration':
                 text_prompt = f"{text_prompt}. {ILLUSTRATION_INSTRUCTIONS}"
+            elif style_hint == 'drawing':
+                text_prompt = f"{text_prompt}. {DRAWING_INSTRUCTIONS}"
             elif style_hint == 'far_side':
                 text_prompt = f"{text_prompt}. {FAR_SIDE_INSTRUCTIONS}"
 
@@ -226,6 +233,10 @@ class AIImage(BasePlugin):
             "illustration": (
                 "You are an illustrator turning a prompt into a bold ink poster brief. Describe silhouettes, layout, "
                 "and contrast without adding new subjects. Keep under 35 words."
+            ),
+            "drawing": (
+                "You are a sketch artist translating a prompt into a pencil drawing brief. Emphasise line quality, "
+                "cross-hatching, and composition while keeping the description under 35 words."
             ),
             "far_side": (
                 "You are a cartoonist adapting a prompt into a Far Side-inspired single-panel gag. Maintain the "
