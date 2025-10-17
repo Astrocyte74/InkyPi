@@ -54,6 +54,8 @@ class TelegramTextFlow:
             "locked": False,
             "awaiting_background": False,
             "custom_background": None,
+            "image_prompt": text.strip(),
+            "awaiting_prompt": False,
         }
         self.requests[request_id] = data
         return data
@@ -79,6 +81,8 @@ class TelegramTextFlow:
                 background_label = "Custom AI (configure)"
             elif request.get("custom_background"):
                 background_label = "Custom AI ✅"
+            elif request.get("awaiting_prompt"):
+                background_label = "Custom AI (set prompt)"
         rewrite_label = "On" if request.get("rewrite") else "Off"
         lines = [
             "📝 Telegram Text",
@@ -89,6 +93,13 @@ class TelegramTextFlow:
             f"Rewrite: {rewrite_label}",
             f"Background: {background_label}",
         ]
+        if request.get("background") == "custom_ai":
+            prompt_preview = request.get("image_prompt", "").strip()
+            if not prompt_preview:
+                prompt_preview = "(empty)"
+            if len(prompt_preview) > 60:
+                prompt_preview = prompt_preview[:57] + "…"
+            lines.append(f"Image prompt: {prompt_preview}")
         if status:
             lines.extend(["", status])
         return "\n".join(lines)
@@ -136,6 +147,22 @@ class TelegramTextFlow:
                     "callback_data": f"txt|{request_id}|cycle_background",
                 }
             ],
+        ]
+
+        if request.get("background") == "custom_ai":
+            preview = request.get("image_prompt", "").strip() or "(empty)"
+            if len(preview) > 20:
+                preview = preview[:17] + "…"
+            keyboard.append(
+                [
+                    {
+                        "text": f"🖋 Prompt: {preview}",
+                        "callback_data": f"txt|{request_id}|set_prompt",
+                    }
+                ]
+            )
+
+        keyboard.append(
             [
                 {
                     "text": "✅ Send",
@@ -145,8 +172,8 @@ class TelegramTextFlow:
                     "text": "✖️ Cancel",
                     "callback_data": f"txt|{request_id}|cancel",
                 },
-            ],
-        ]
+            ]
+        )
         return {"inline_keyboard": keyboard}
 
     # --- Mutators ----------------------------------------------------------
@@ -166,10 +193,18 @@ class TelegramTextFlow:
         if request["background"] != "custom_ai":
             request["awaiting_background"] = False
             request["custom_background"] = None
+            request["awaiting_prompt"] = False
+        else:
+            if not request.get("image_prompt"):
+                request["image_prompt"] = request["text"].strip()
+
+    def await_custom_prompt(self, request):
+        request["awaiting_prompt"] = True
 
     def mark_custom_background_pending(self, request):
         request["awaiting_background"] = True
         request["custom_background"] = None
+        request["awaiting_prompt"] = False
 
     def attach_custom_background(self, request_id, background_path):
         request = self.requests.get(request_id)
@@ -178,6 +213,20 @@ class TelegramTextFlow:
         request["custom_background"] = background_path
         request["awaiting_background"] = False
         return request
+
+    def consume_prompt(self, chat_id, text):
+        if text.strip().startswith("/") and text.strip().lower() != "/skip":
+            return None
+        for request in self.requests.values():
+            if request["chat_id"] == chat_id and request.get("awaiting_prompt"):
+                cleaned = text.strip()
+                if cleaned.lower() == "/skip":
+                    request["image_prompt"] = request["text"].strip()
+                else:
+                    request["image_prompt"] = cleaned or request["text"].strip()
+                request["awaiting_prompt"] = False
+                return request
+        return None
 
     # --- Final rendering ---------------------------------------------------
 

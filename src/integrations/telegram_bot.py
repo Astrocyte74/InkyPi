@@ -167,6 +167,13 @@ class TelegramBotListener:
 
     def _handle_text(self, text, chat_id, message_id):
         text = text.strip()
+
+        pending_request = self.text_flow.consume_prompt(chat_id, text)
+        if pending_request:
+            self._refresh_text_message(pending_request, status="Background prompt updated. Confirm to continue.")
+            self._send_message(chat_id, "Background prompt updated. Tap Send when ready or /skip to use the note text.")
+            return
+
         if text.lower() in {"/start", "/help"}:
             self._send_message(
                 chat_id,
@@ -389,8 +396,16 @@ class TelegramBotListener:
                 label = dict(self.text_flow.BACKGROUND_OPTIONS).get(request["background"], request["background"])
                 self._refresh_text_message(request)
                 self._answer_callback(callback_query["id"], text=f"Background: {label}")
+            elif action == "set_prompt":
+                self.text_flow.await_custom_prompt(request)
+                self._refresh_text_message(request, status="Send background prompt or /skip to reuse the note text.")
+                self._answer_callback(callback_query["id"], text="Send background prompt now…")
             elif action == "confirm":
                 if request.get("background") == "custom_ai":
+                    if request.get("awaiting_prompt"):
+                        self._refresh_text_message(request, status="Enter a background prompt before continuing.")
+                        self._answer_callback(callback_query["id"], text="Send a background prompt first.")
+                        return
                     request["locked"] = True
                     self.text_flow.mark_custom_background_pending(request)
                     self._refresh_text_message(request, status="Select background image options…")
@@ -470,7 +485,7 @@ class TelegramBotListener:
         self.text_flow.set_message_id(request["id"], response["result"]["message_id"])
 
     def _start_custom_background_flow(self, text_request):
-        prompt = text_request["text"].strip()
+        prompt = text_request.get("image_prompt") or text_request["text"].strip()
         if not prompt:
             prompt = "Background"
         self._init_ai_prompt(text_request["chat_id"], prompt, source_text_request_id=text_request["id"])
