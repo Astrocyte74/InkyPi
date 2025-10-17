@@ -1,3 +1,4 @@
+import json
 import os
 import threading
 import time
@@ -10,6 +11,7 @@ from PIL import Image
 
 from model import RefreshInfo
 from utils.image_utils import compute_image_hash
+from plugins.plugin_registry import get_plugin_instance
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +21,18 @@ class TelegramBotListener:
 
     API_BASE = "https://api.telegram.org/bot{token}"
     FILE_BASE = "https://api.telegram.org/file/bot{token}"
+
+    AI_MODELS = [
+        ("dall-e-3", "DALL·E 3"),
+        ("gpt-image-1", "GPT Image 1"),
+        ("dall-e-2", "DALL·E 2"),
+    ]
+
+    QUALITY_OPTIONS = {
+        "dall-e-3": ["standard", "hd"],
+        "gpt-image-1": ["medium", "high", "low"],
+        "dall-e-2": ["standard"],
+    }
 
     def __init__(
         self,
@@ -46,6 +60,8 @@ class TelegramBotListener:
         self.storage_dir = os.path.join(self.device_config.BASE_DIR, "..", "mock_display_output", "telegram")
         os.makedirs(self.storage_dir, exist_ok=True)
 
+        self.pending_requests = {}
+
     def start(self):
         if self._thread and self._thread.is_alive():
             return
@@ -62,7 +78,10 @@ class TelegramBotListener:
     def _run(self):
         while not self._stop_event.is_set():
             try:
-                params = {"timeout": self.poll_timeout, "allowed_updates": ["message", "edited_message"]}
+                params = {
+                    "timeout": self.poll_timeout,
+                    "allowed_updates": ["message", "edited_message", "callback_query"],
+                }
                 if self._offset is not None:
                     params["offset"] = self._offset
                 resp = requests.get(f"{self.api_url}/getUpdates", params=params, timeout=self.poll_timeout + 5)
@@ -87,6 +106,12 @@ class TelegramBotListener:
 
     def _handle_update(self, update):
         message = update.get("message") or update.get("edited_message")
+        callback_query = update.get("callback_query")
+
+        if callback_query:
+            self._handle_callback(callback_query)
+            return
+
         if not message:
             return
 
@@ -99,13 +124,13 @@ class TelegramBotListener:
             return
 
         if "text" in message:
-            self._handle_text(message["text"], chat_id)
+            self._handle_text(message["text"], chat_id, message["message_id"])
         elif "photo" in message:
             self._handle_photo(message["photo"], chat_id)
         else:
             self._send_message(chat_id, "Send a photo or use /status.")
 
-    def _handle_text(self, text, chat_id):
+    def _handle_text(self, text, chat_id, message_id):
         text = text.strip()
         if text.lower() in {"/start", "/help"}:
             self._send_message(
@@ -114,8 +139,14 @@ class TelegramBotListener:
             )
         elif text.lower() == "/status":
             self._send_status(chat_id)
+        elif text.startswith("/ai"):
+            prompt = text[3:].strip()
+            if not prompt:
+                self._send_message(chat_id, "Usage: /ai <prompt>")
+                return
+            self._init_ai_prompt(chat_id, prompt)
         else:
-            self._send_message(chat_id, "Unknown command. Send a photo or use /status.")
+            self._init_ai_prompt(chat_id, text)
 
     def _handle_photo(self, photos, chat_id):
         if not photos:
@@ -178,7 +209,7 @@ class TelegramBotListener:
             self._api_post("sendPhoto", data=data, files=files)
 
     def _send_message(self, chat_id, text):
-        self._api_post(
+        return self._api_post(
             "sendMessage",
             data={"chat_id": chat_id, "text": text},
         )
@@ -192,3 +223,259 @@ class TelegramBotListener:
             raise RuntimeError(payload)
         return payload
 
+    # --- AI assistant helpers ---
+
+    def _handle_callback(self, callback_query):
+        data = callback_query.get("data", "")
+        if not data:
+            self._answer_callback(callback_query["id"])
+            return
+
+        parts = data.split("|")
+        if len(parts) < 3 or parts[0] != "ai":
+            self._answer_callback(callback_query["id"])
+            return
+
+        request_id = parts[1]
+        action = parts[2]
+        request = self.pending_requests.get(request_id)
+        if not request:
+            self._answer_callback(callback_query["id"], text="Request expired.")
+            return
+
+        chat_id = request["chat_id"]
+
+        if request.get("locked") and action not in ("cancel",):
+            self._answer_callback(callback_query["id"], text="Processing, please wait…")
+            return
+
+        if action == "cycle_model":
+            self._cycle_model(request)
+            self._refresh_ai_message(request)
+            self._answer_callback(callback_query["id"], text="Model updated.")
+        elif action == "cycle_quality":
+            self._cycle_quality(request)
+            self._refresh_ai_message(request)
+            self._answer_callback(callback_query["id"], text="Quality updated.")
+        elif action == "toggle_randomize":
+            request["randomize"] = not request["randomize"]
+            self._refresh_ai_message(request)
+            status = "on" if request["randomize"] else "off"
+            self._answer_callback(callback_query["id"], text=f"Randomize {status}.")
+        elif action == "generate":
+            self._answer_callback(callback_query["id"], text="Generating image…")
+            request["locked"] = True
+            threading.Thread(
+                target=self._process_ai_generation,
+                args=(request_id,),
+                name=f"TelegramAI-{request_id}",
+                daemon=True,
+            ).start()
+        elif action == "cancel":
+            self._answer_callback(callback_query["id"], text="Cancelled.")
+            self._cancel_ai_request(request_id, status_text="Cancelled.")
+        else:
+            self._answer_callback(callback_query["id"])
+
+    def _init_ai_prompt(self, chat_id, prompt):
+        prompt = prompt.strip()
+        if not prompt:
+            self._send_message(chat_id, "Prompt cannot be empty.")
+            return
+
+        request_id = f"{chat_id}:{int(time.time()*1000)}"
+        model = self.AI_MODELS[0][0]
+        quality = self.QUALITY_OPTIONS[model][0]
+        request = {
+            "id": request_id,
+            "chat_id": chat_id,
+            "prompt": prompt,
+            "model": model,
+            "quality": quality,
+            "randomize": False,
+            "message_id": None,
+            "locked": False,
+        }
+        self.pending_requests[request_id] = request
+
+        summary = self._format_ai_summary(request)
+        markup = self._build_ai_keyboard(request_id, request)
+        response = self._api_post(
+            "sendMessage",
+            data={
+                "chat_id": chat_id,
+                "text": summary,
+                "reply_markup": json.dumps(markup),
+            },
+        )
+        request["message_id"] = response["result"]["message_id"]
+
+    def _cycle_model(self, request):
+        model_values = [m[0] for m in self.AI_MODELS]
+        idx = model_values.index(request["model"])
+        idx = (idx + 1) % len(model_values)
+        request["model"] = model_values[idx]
+
+        allowed_quality = self.QUALITY_OPTIONS[request["model"]]
+        if request["quality"] not in allowed_quality:
+            request["quality"] = allowed_quality[0]
+
+    def _cycle_quality(self, request):
+        allowed_quality = self.QUALITY_OPTIONS[request["model"]]
+        idx = allowed_quality.index(request["quality"])
+        idx = (idx + 1) % len(allowed_quality)
+        request["quality"] = allowed_quality[idx]
+
+    def _format_ai_summary(self, request, status=None):
+        model_label = dict(self.AI_MODELS)[request["model"]]
+        quality_label = request["quality"].capitalize()
+        randomize_label = "on" if request["randomize"] else "off"
+        lines = [
+            "🎨 AI Image Prompt",
+            "",
+            f"Prompt: {request['prompt']}",
+            f"Model: {model_label}",
+            f"Quality: {quality_label}",
+            f"Randomize: {randomize_label}",
+        ]
+        if status:
+            lines.extend(["", status])
+        return "\n".join(lines)
+
+    def _build_ai_keyboard(self, request_id, request):
+        quality_text = request["quality"].capitalize()
+        randomize_text = "Randomize: on" if request["randomize"] else "Randomize: off"
+        model_label = dict(self.AI_MODELS)[request["model"]]
+        return {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": f"Model: {model_label}",
+                        "callback_data": f"ai|{request_id}|cycle_model",
+                    },
+                    {
+                        "text": f"Quality: {quality_text}",
+                        "callback_data": f"ai|{request_id}|cycle_quality",
+                    },
+                ],
+                [
+                    {
+                        "text": randomize_text,
+                        "callback_data": f"ai|{request_id}|toggle_randomize",
+                    }
+                ],
+                [
+                    {
+                        "text": "Generate",
+                        "callback_data": f"ai|{request_id}|generate",
+                    },
+                    {
+                        "text": "Cancel",
+                        "callback_data": f"ai|{request_id}|cancel",
+                    },
+                ],
+            ]
+        }
+
+    def _refresh_ai_message(self, request, status=None):
+        summary = self._format_ai_summary(request, status=status)
+        if request.get("locked"):
+            markup = {"inline_keyboard": []}
+        else:
+            markup = self._build_ai_keyboard(request["id"], request)
+        data = {
+            "chat_id": request["chat_id"],
+            "message_id": request["message_id"],
+            "text": summary,
+            "reply_markup": json.dumps(markup),
+        }
+        self._api_post("editMessageText", data=data)
+
+    def _process_ai_generation(self, request_id):
+        request = self.pending_requests.get(request_id)
+        if not request:
+            return
+
+        try:
+            self._refresh_ai_message(request, status="Generating image…")
+        except Exception:
+            logger.exception("Failed to update Telegram message during generation.")
+
+        try:
+            image = self._generate_ai_image(request)
+        except Exception as exc:
+            logger.exception("AI generation failed: %s", exc)
+            self._send_message(request["chat_id"], f"Failed to generate image: {exc}")
+            self._cancel_ai_request(request_id, status_text="Failed.")
+            return
+
+        caption = f"✅ Image generated with {dict(self.AI_MODELS)[request['model']]} ({request['quality']})"
+        self._send_photo(request["chat_id"], image, caption=caption)
+        self._cancel_ai_request(request_id, status_text="Completed.")
+
+    def _cancel_ai_request(self, request_id, status_text="Cancelled."):
+        request = self.pending_requests.pop(request_id, None)
+        if not request:
+            return
+
+        try:
+            data = {
+                "chat_id": request["chat_id"],
+                "message_id": request["message_id"],
+                "text": self._format_ai_summary(request, status=status_text),
+                "reply_markup": json.dumps({"inline_keyboard": []}),
+            }
+            self._api_post("editMessageText", data=data)
+        except Exception:
+            logger.exception("Failed to update Telegram message on completion/cancel.")
+
+    def _generate_ai_image(self, request):
+        plugin_config = self.device_config.get_plugin("ai_image")
+        if not plugin_config:
+            raise RuntimeError("AI Image plugin is not installed.")
+
+        plugin = get_plugin_instance(plugin_config)
+        settings = {
+            "textPrompt": request["prompt"],
+            "imageModel": request["model"],
+            "quality": request["quality"],
+            "randomizePrompt": "true" if request["randomize"] else "false",
+        }
+
+        image = plugin.generate_image(settings, self.device_config)
+        self.display_manager.display_image(image, image_settings=plugin_config.get("image_settings", []))
+        current_dt = (
+            self.refresh_task._get_current_datetime()
+            if hasattr(self.refresh_task, "_get_current_datetime")
+            else datetime.utcnow()
+        )
+        image_hash = compute_image_hash(image)
+        refresh_info = RefreshInfo(
+            refresh_type="Telegram AI",
+            plugin_id="ai_image",
+            refresh_time=current_dt.isoformat(),
+            image_hash=image_hash,
+        )
+        self.device_config.refresh_info = refresh_info
+        self.device_config.write_config()
+
+        self._save_image(image)
+        return image
+
+    def _send_photo(self, chat_id, image, caption=None):
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        buffer.seek(0)
+        files = {"photo": ("image.png", buffer, "image/png")}
+        data = {"chat_id": chat_id}
+        if caption:
+            data["caption"] = caption
+        self._api_post("sendPhoto", data=data, files=files)
+
+    def _answer_callback(self, callback_id, text=None, alert=False):
+        data = {"callback_query_id": callback_id}
+        if text:
+            data["text"] = text
+        if alert:
+            data["show_alert"] = True
+        self._api_post("answerCallbackQuery", data=data)
