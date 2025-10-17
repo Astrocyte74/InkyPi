@@ -90,13 +90,10 @@ class AIImage(BasePlugin):
             prompt_client = self._get_prompt_client(device_config, ai_client)
             if randomize_prompt:
                 text_prompt = AIImage.fetch_image_prompt(prompt_client, text_prompt)
-                if creative_enhance:
-                    text_prompt = AIImage.enhance_prompt(prompt_client, text_prompt)
             elif creative_enhance:
                 text_prompt = AIImage.enhance_prompt(prompt_client, text_prompt)
-
-            if style_hint in {'van_gogh', 'illustration', 'far_side'} and not randomize_prompt:
-                text_prompt = AIImage.style_polish_prompt(prompt_client, text_prompt, style_hint)
+            elif style_hint in {'van_gogh', 'illustration', 'far_side'}:
+                text_prompt = AIImage.style_rewrite_prompt(prompt_client, text_prompt, style_hint)
 
             if palette == 'bw':
                 text_prompt = f"{text_prompt}. {MONO_INSTRUCTIONS}"
@@ -217,7 +214,7 @@ class AIImage(BasePlugin):
         return refined
 
     @staticmethod
-    def style_polish_prompt(prompt_client, prompt, style_hint):
+    def style_rewrite_prompt(prompt_client, prompt, style_hint):
         if not prompt or not prompt.strip():
             return prompt
 
@@ -242,9 +239,9 @@ class AIImage(BasePlugin):
         )
         user_content = f"Original prompt: \"{prompt.strip()}\"\nRewrite it following your guidance."
 
-        refined = AIImage._call_prompt_service(prompt_client, system_content, user_content, temperature=0.8)
-        logger.info("Style polish (%s): %s", style_hint, refined)
-        return refined
+        rewritten = AIImage._call_prompt_service(prompt_client, system_content, user_content, temperature=0.85)
+        logger.info("Style rewrite (%s): %s", style_hint, rewritten)
+        return rewritten
 
     @staticmethod
     def _call_prompt_service(prompt_client, system_content, user_content, temperature=0.7):
