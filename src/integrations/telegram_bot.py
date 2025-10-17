@@ -383,9 +383,9 @@ class TelegramBotListener:
 
     def _build_ai_keyboard(self, request_id, request):
         quality_text = request["quality"].capitalize()
-        randomize_text = "🎲 Randomize ✅" if request["randomize"] else "🎲 Randomize"
-        creative_text = "✨ Creative ✅" if request["creative"] else "✨ Creative"
-        vangogh_text = "🖌️ Van Gogh ✅" if request["van_gogh"] else "🖌️ Van Gogh"
+        randomize_text = "🎲 Randomize 🟦" if request["randomize"] else "🎲 Randomize"
+        creative_text = "✨ Creative 🟦" if request["creative"] else "✨ Creative"
+        vangogh_text = "🖌️ Van Gogh 🟨" if request["van_gogh"] else "🖌️ Van Gogh"
         model_label = dict(self.AI_MODELS)[request["model"]]
         return {
             "inline_keyboard": [
