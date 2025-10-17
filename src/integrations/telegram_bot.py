@@ -426,26 +426,15 @@ class TelegramBotListener:
         model_label = dict(self.AI_MODELS)[request["model"]]
         quality_text = request["quality"].capitalize()
 
-        separator = {"text": "────────────", "callback_data": "ai|noop|noop"}
-
         keyboard = [
             [
-                {
-                    "text": f"⚙️ Model: {model_label}",
-                    "callback_data": f"ai|{request_id}|cycle_model",
-                },
-                {
-                    "text": f"📐 Quality: {quality_text}",
-                    "callback_data": f"ai|{request_id}|cycle_quality",
-                },
-            ],
-            [separator],
+                {"text": f"⚙️ Model: {model_label}", "callback_data": f"ai|{request_id}|cycle_model"},
+                {"text": f"📐 Quality: {quality_text}", "callback_data": f"ai|{request_id}|cycle_quality"},
+            ]
         ]
 
         for row in self.STYLE_ROWS:
             keyboard.append([self._style_button(request_id, request, style_value) for style_value in row])
-
-        keyboard.append([separator])
 
         palette_label = "Spectra 6" if request["palette"] == "spectra6" else "Monochrome"
         keyboard.append(
@@ -587,7 +576,4 @@ class TelegramBotListener:
             data["text"] = text
         if alert:
             data["show_alert"] = True
-        # Ignore no-op callbacks used for separators
-        if data.get("callback_query_id") and data.get("callback_query_id") == "noop":
-            return
         self._api_post("answerCallbackQuery", data=data)
