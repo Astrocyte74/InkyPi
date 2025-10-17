@@ -26,6 +26,21 @@ MONO_INSTRUCTIONS = (
     "a slow refresh rate."
 )
 
+VAN_GOGH_INSTRUCTIONS = (
+    "Render the scene in the style of Vincent van Gogh, with expressive impasto brushstrokes, swirling motion, and "
+    "vibrant post-impressionist energy."
+)
+
+ILLUSTRATION_INSTRUCTIONS = (
+    "Render as a bold ink illustration with clean outlines, minimal shading, and simplified shapes suited for "
+    "screen-print or poster art. Prioritise readable silhouettes and strong contrast over fine detail."
+)
+
+FAR_SIDE_INSTRUCTIONS = (
+    "Illustrate as a single-panel Far Side-inspired cartoon with thick outlines, simple backgrounds, and dry humour. "
+    "Use minimal text (preferably none), anthropomorphic characters, and avoid clutter or heavy shading."
+)
+
 class AIImage(BasePlugin):
     def generate_settings_template(self):
         template_params = super().generate_settings_template()
@@ -52,6 +67,9 @@ class AIImage(BasePlugin):
         creative_enhance = settings.get('creativeEnhance') == 'true'
         palette = settings.get('palette', 'spectra6').lower()
         van_gogh_style = settings.get('vanGoghStyle') == 'true'
+        style_hint = (settings.get('styleHint') or '').lower()
+        if style_hint == 'van_gogh':
+            van_gogh_style = True
 
         image = None
         try:
@@ -70,10 +88,11 @@ class AIImage(BasePlugin):
                 text_prompt = f"{text_prompt}. {SPECTRA6_INSTRUCTIONS}"
 
             if van_gogh_style:
-                text_prompt = (
-                    f"{text_prompt} Render the scene in the style of Vincent van Gogh, with expressive impasto "
-                    "brushstrokes, swirling motion, and vibrant post-impressionist energy."
-                )
+                text_prompt = f"{text_prompt}. {VAN_GOGH_INSTRUCTIONS}"
+            elif style_hint == 'illustration':
+                text_prompt = f"{text_prompt}. {ILLUSTRATION_INSTRUCTIONS}"
+            elif style_hint == 'far_side':
+                text_prompt = f"{text_prompt}. {FAR_SIDE_INSTRUCTIONS}"
 
             image = AIImage.fetch_image(
                 ai_client,

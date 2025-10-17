@@ -34,6 +34,33 @@ class TelegramBotListener:
         "dall-e-2": ["standard"],
     }
 
+    STYLE_OPTIONS = [
+        ("none", "🚫 None"),
+        ("randomize", "🎲 Randomize"),
+        ("creative", "✨ Creative"),
+        ("van_gogh", "🖌️ Van Gogh"),
+        ("illustration", "✏️ Illustration"),
+        ("far_side", "🐄 Far Side"),
+    ]
+
+    STYLE_ROWS = [
+        ("none",),
+        ("randomize", "creative"),
+        ("van_gogh", "illustration"),
+        ("far_side",),
+    ]
+
+    STYLE_LABELS = {value: label for value, label in STYLE_OPTIONS}
+
+    def _style_button(self, request_id, request, style_value):
+        base_label = self.STYLE_LABELS.get(style_value, style_value.capitalize())
+        current_style = request.get("style", "none")
+        label = f"{base_label} ✅" if style_value == current_style else base_label
+        return {
+            "text": label,
+            "callback_data": f"ai|{request_id}|style|{style_value}",
+        }
+
     def __init__(
         self,
         token,
@@ -238,11 +265,13 @@ class TelegramBotListener:
 
         request_id = parts[1]
         action = parts[2]
+        param = parts[3] if len(parts) > 3 else None
         request = self.pending_requests.get(request_id)
         if not request:
             self._answer_callback(callback_query["id"], text="Request expired.")
             return
 
+        self._ensure_style(request)
         chat_id = request["chat_id"]
 
         if request.get("locked") and action not in ("cancel",):
@@ -257,30 +286,29 @@ class TelegramBotListener:
             self._cycle_quality(request)
             self._refresh_ai_message(request)
             self._answer_callback(callback_query["id"], text="Quality updated.")
-        elif action == "toggle_randomize":
-            request["randomize"] = not request["randomize"]
-            if request["randomize"]:
-                request["creative"] = False
-                request["van_gogh"] = False
+        elif action in {"toggle_randomize", "toggle_creative", "toggle_vangogh"}:
+            # Backwards compatibility for older keyboards
+            mapping = {
+                "toggle_randomize": "randomize",
+                "toggle_creative": "creative",
+                "toggle_vangogh": "van_gogh",
+            }
+            new_style = mapping[action]
+            if request.get("style") == new_style:
+                self._set_style(request, "none")
+            else:
+                self._set_style(request, new_style)
             self._refresh_ai_message(request)
-            status = "on" if request["randomize"] else "off"
-            self._answer_callback(callback_query["id"], text=f"Randomize {status}.")
-        elif action == "toggle_creative":
-            request["creative"] = not request["creative"]
-            if request["creative"]:
-                request["randomize"] = False
-                request["van_gogh"] = False
+            label = self.STYLE_LABELS.get(request["style"], request["style"])  # type: ignore[index]
+            self._answer_callback(callback_query["id"], text=f"Style: {label}")
+        elif action == "style" and param:
+            if param not in self.STYLE_LABELS:
+                self._answer_callback(callback_query["id"], text="Unknown style.")
+                return
+            self._set_style(request, param)
             self._refresh_ai_message(request)
-            status = "on" if request["creative"] else "off"
-            self._answer_callback(callback_query["id"], text=f"Creative enhance {status}.")
-        elif action == "toggle_vangogh":
-            request["van_gogh"] = not request["van_gogh"]
-            if request["van_gogh"]:
-                request["randomize"] = False
-                request["creative"] = False
-            self._refresh_ai_message(request)
-            status = "on" if request["van_gogh"] else "off"
-            self._answer_callback(callback_query["id"], text=f"Van Gogh style {status}.")
+            label = self.STYLE_LABELS[param]
+            self._answer_callback(callback_query["id"], text=f"Style: {label}")
         elif action == "cycle_palette":
             self._cycle_palette(request)
             self._refresh_ai_message(request)
@@ -316,13 +344,11 @@ class TelegramBotListener:
             "prompt": prompt,
             "model": model,
             "quality": quality,
-            "randomize": False,
-            "creative": False,
             "palette": "spectra6",
-            "van_gogh": False,
             "message_id": None,
             "locked": False,
         }
+        self._set_style(request, "none")
         self.pending_requests[request_id] = request
 
         summary = self._format_ai_summary(request)
@@ -356,17 +382,31 @@ class TelegramBotListener:
     def _cycle_palette(self, request):
         request["palette"] = "bw" if request["palette"] == "spectra6" else "spectra6"
 
+    def _set_style(self, request, style):
+        if style not in self.STYLE_LABELS:
+            style = "none"
+        request["style"] = style
+        request["randomize"] = style == "randomize"
+        request["creative"] = style == "creative"
+        request["van_gogh"] = style == "van_gogh"
+
+    def _ensure_style(self, request):
+        if "style" in request:
+            return
+        if request.get("van_gogh"):
+            seed = "van_gogh"
+        elif request.get("randomize"):
+            seed = "randomize"
+        elif request.get("creative"):
+            seed = "creative"
+        else:
+            seed = "none"
+        self._set_style(request, seed)
+
     def _format_ai_summary(self, request, status=None):
         model_label = dict(self.AI_MODELS)[request["model"]]
         quality_label = request["quality"].capitalize()
-        if request["van_gogh"]:
-            style_label = "Van Gogh"
-        elif request["randomize"]:
-            style_label = "Randomize"
-        elif request["creative"]:
-            style_label = "Creative enhance"
-        else:
-            style_label = "None"
+        style_label = self.STYLE_LABELS.get(request.get("style", "none"), "None")
         palette_label = "Spectra 6" if request["palette"] == "spectra6" else "Monochrome"
         lines = [
             "🎨 AI Image Prompt",
@@ -382,55 +422,50 @@ class TelegramBotListener:
         return "\n".join(lines)
 
     def _build_ai_keyboard(self, request_id, request):
-        quality_text = request["quality"].capitalize()
-        randomize_text = "🎲 Randomize 🟦" if request["randomize"] else "🎲 Randomize"
-        creative_text = "✨ Creative 🟦" if request["creative"] else "✨ Creative"
-        vangogh_text = "🖌️ Van Gogh 🟨" if request["van_gogh"] else "🖌️ Van Gogh"
+        self._ensure_style(request)
         model_label = dict(self.AI_MODELS)[request["model"]]
-        return {
-            "inline_keyboard": [
-                [
-                    {
-                        "text": f"Model: {model_label}",
-                        "callback_data": f"ai|{request_id}|cycle_model",
-                    },
-                    {
-                        "text": f"Quality: {quality_text}",
-                        "callback_data": f"ai|{request_id}|cycle_quality",
-                    },
-                ],
-                [
-                    {
-                        "text": randomize_text,
-                        "callback_data": f"ai|{request_id}|toggle_randomize",
-                    },
-                    {
-                        "text": creative_text,
-                        "callback_data": f"ai|{request_id}|toggle_creative",
-                    },
-                    {
-                        "text": vangogh_text,
-                        "callback_data": f"ai|{request_id}|toggle_vangogh",
-                    },
-                ],
-                [
-                    {
-                        "text": f"Palette: {'Spectra 6' if request['palette'] == 'spectra6' else 'Monochrome'}",
-                        "callback_data": f"ai|{request_id}|cycle_palette",
-                    }
-                ],
-                [
-                    {
-                        "text": "Generate",
-                        "callback_data": f"ai|{request_id}|generate",
-                    },
-                    {
-                        "text": "Cancel",
-                        "callback_data": f"ai|{request_id}|cancel",
-                    },
-                ],
+        quality_text = request["quality"].capitalize()
+
+        keyboard = [
+            [
+                {
+                    "text": f"Model: {model_label}",
+                    "callback_data": f"ai|{request_id}|cycle_model",
+                },
+                {
+                    "text": f"Quality: {quality_text}",
+                    "callback_data": f"ai|{request_id}|cycle_quality",
+                },
             ]
-        }
+        ]
+
+        for row in self.STYLE_ROWS:
+            keyboard.append([self._style_button(request_id, request, style_value) for style_value in row])
+
+        palette_label = "Spectra 6" if request["palette"] == "spectra6" else "Monochrome"
+        keyboard.append(
+            [
+                {
+                    "text": f"🎨 Palette: {palette_label}",
+                    "callback_data": f"ai|{request_id}|cycle_palette",
+                }
+            ]
+        )
+
+        keyboard.append(
+            [
+                {
+                    "text": "🚀 Generate",
+                    "callback_data": f"ai|{request_id}|generate",
+                },
+                {
+                    "text": "✖️ Cancel",
+                    "callback_data": f"ai|{request_id}|cancel",
+                },
+            ]
+        )
+
+        return {"inline_keyboard": keyboard}
 
     def _refresh_ai_message(self, request, status=None):
         summary = self._format_ai_summary(request, status=status)
@@ -485,20 +520,31 @@ class TelegramBotListener:
             logger.exception("Failed to update Telegram message on completion/cancel.")
 
     def _generate_ai_image(self, request):
+        self._ensure_style(request)
         plugin_config = self.device_config.get_plugin("ai_image")
         if not plugin_config:
             raise RuntimeError("AI Image plugin is not installed.")
 
         plugin = get_plugin_instance(plugin_config)
+        style = request.get("style", "none")
         settings = {
             "textPrompt": request["prompt"],
             "imageModel": request["model"],
             "quality": request["quality"],
-            "randomizePrompt": "true" if request["randomize"] else "false",
-            "creativeEnhance": "true" if request["creative"] else "false",
             "palette": request["palette"],
-            "vanGoghStyle": "true" if request["van_gogh"] else "false",
         }
+
+        if style == "randomize":
+            settings["randomizePrompt"] = "true"
+        elif style == "creative":
+            settings["creativeEnhance"] = "true"
+        elif style == "van_gogh":
+            settings["vanGoghStyle"] = "true"
+            settings["styleHint"] = "van_gogh"
+        elif style == "illustration":
+            settings["styleHint"] = "illustration"
+        elif style == "far_side":
+            settings["styleHint"] = "far_side"
 
         image = plugin.generate_image(settings, self.device_config)
         self.display_manager.display_image(image, image_settings=plugin_config.get("image_settings", []))
