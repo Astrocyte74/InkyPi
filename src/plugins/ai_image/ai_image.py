@@ -51,6 +51,7 @@ class AIImage(BasePlugin):
         randomize_prompt = settings.get('randomizePrompt') == 'true'
         creative_enhance = settings.get('creativeEnhance') == 'true'
         palette = settings.get('palette', 'spectra6').lower()
+        van_gogh_style = settings.get('vanGoghStyle') == 'true'
 
         image = None
         try:
@@ -67,6 +68,12 @@ class AIImage(BasePlugin):
             else:
                 # default to spectra 6 instructions
                 text_prompt = f"{text_prompt}. {SPECTRA6_INSTRUCTIONS}"
+
+            if van_gogh_style:
+                text_prompt = (
+                    f"{text_prompt} Render the scene in the style of Vincent van Gogh, with expressive impasto "
+                    "brushstrokes, swirling motion, and vibrant post-impressionist energy."
+                )
 
             image = AIImage.fetch_image(
                 ai_client,

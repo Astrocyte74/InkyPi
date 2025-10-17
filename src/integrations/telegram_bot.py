@@ -271,6 +271,11 @@ class TelegramBotListener:
             self._refresh_ai_message(request)
             status = "on" if request["creative"] else "off"
             self._answer_callback(callback_query["id"], text=f"Creative enhance {status}.")
+        elif action == "toggle_vangogh":
+            request["van_gogh"] = not request["van_gogh"]
+            self._refresh_ai_message(request)
+            status = "on" if request["van_gogh"] else "off"
+            self._answer_callback(callback_query["id"], text=f"Van Gogh style {status}.")
         elif action == "cycle_palette":
             self._cycle_palette(request)
             self._refresh_ai_message(request)
@@ -309,6 +314,7 @@ class TelegramBotListener:
             "randomize": False,
             "creative": False,
             "palette": "spectra6",
+            "van_gogh": False,
             "message_id": None,
             "locked": False,
         }
@@ -351,6 +357,7 @@ class TelegramBotListener:
         randomize_label = "on" if request["randomize"] else "off"
         creative_label = "on" if request["creative"] else "off"
         palette_label = "Spectra 6" if request["palette"] == "spectra6" else "Monochrome"
+        vangogh_label = "on" if request["van_gogh"] else "off"
         lines = [
             "🎨 AI Image Prompt",
             "",
@@ -360,6 +367,7 @@ class TelegramBotListener:
             f"Randomize: {randomize_label}",
             f"Creative enhance: {creative_label}",
             f"Palette: {palette_label}",
+            f"Van Gogh style: {vangogh_label}",
         ]
         if status:
             lines.extend(["", status])
@@ -389,6 +397,10 @@ class TelegramBotListener:
                     {
                         "text": f"Creative: {'on' if request['creative'] else 'off'}",
                         "callback_data": f"ai|{request_id}|toggle_creative",
+                    },
+                    {
+                        "text": f"Van Gogh: {'on' if request['van_gogh'] else 'off'}",
+                        "callback_data": f"ai|{request_id}|toggle_vangogh",
                     },
                 ],
                 [
@@ -475,6 +487,7 @@ class TelegramBotListener:
             "randomizePrompt": "true" if request["randomize"] else "false",
             "creativeEnhance": "true" if request["creative"] else "false",
             "palette": request["palette"],
+            "vanGoghStyle": "true" if request["van_gogh"] else "false",
         }
 
         image = plugin.generate_image(settings, self.device_config)
