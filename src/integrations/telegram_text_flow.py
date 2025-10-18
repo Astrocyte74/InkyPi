@@ -170,21 +170,28 @@ class TelegramTextFlow:
             text = f"{label} {'✅' if active else ''}".strip()
             return {"text": text, "callback_data": f"txt|{request_id}|background|{value}"}
 
-        bg_row = [
-            bg_btn("none", "None"),
-            bg_btn("ai_image", "Auto AI"),
-            bg_btn("latest", "Use Last Image"),
-            bg_btn("color", "Solid Colour"),
-            bg_btn("custom_ai", "Custom AI"),
+        # Split background options across three rows for clarity and longer labels
+        bg_rows = [
+            [
+                bg_btn("none", "None"),
+                bg_btn("ai_image", "Auto AI"),
+            ],
+            [
+                bg_btn("latest", "Use Last Image"),
+            ],
+            [
+                bg_btn("color", "Solid Colour"),
+                bg_btn("custom_ai", "Custom AI"),
+            ],
         ]
 
-        # Place rows: style, rewrite, then a label above background row
+        # Place rows: style, rewrite, then a label above background rows
         keyboard = [
             style_row,
             rewrite_row,
             [{"text": "Pick background:", "callback_data": f"txt|{request_id}|noop"}],
-            bg_row,
         ]
+        keyboard.extend(bg_rows)
 
         # Contextual actions
         if request.get("bg_selected") and request.get("background") == "custom_ai":
