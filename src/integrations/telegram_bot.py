@@ -225,19 +225,8 @@ class TelegramBotListener:
                     logger.exception("Failed to save named image: %s", exc)
                     self._send_message(chat_id, f"Save failed: {exc}")
             else:
-                # Ask for a name via ForceReply; remember source
-                self.pending_save[chat_id] = {"source": source}
-                try:
-                    self._api_post(
-                        "sendMessage",
-                        data={
-                            "chat_id": chat_id,
-                            "text": f"Enter a name to save the {source} image (letters, numbers, dashes).",
-                            "reply_markup": json.dumps({"force_reply": True, "input_field_placeholder": "e.g. sunrise-01"}),
-                        },
-                    )
-                except Exception:
-                    logger.exception("Failed to send ForceReply for /save name.")
+                # Show interactive save menu instead of ForceReply
+                self._send_save_menu(chat_id)
             return
         elif text.startswith("/ai"):
             prompt = text[3:].strip()
@@ -639,6 +628,76 @@ class TelegramBotListener:
                 self._answer_callback(callback_query["id"], text="Cancelled.")
             else:
                 self._answer_callback(callback_query["id"])
+        elif flow_type == "save":
+            chat_id = callback_query.get("message", {}).get("chat", {}).get("id")
+            message_id = callback_query.get("message", {}).get("message_id")
+            action = parts[1] if len(parts) > 1 else None
+            arg = parts[2] if len(parts) > 2 else None
+            if action == "choose" and arg in {"bg", "text"}:
+                suggestion = self._suggest_save_name(arg)
+                text = (
+                    f"Save {'Background' if arg=='bg' else 'Text'}\n\n"
+                    f"Suggested name: {suggestion}"
+                )
+                markup = {
+                    "inline_keyboard": [
+                        [
+                            {"text": f"Quick Save as '{suggestion}'", "callback_data": f"save|quick|{arg}|{suggestion}"},
+                        ],
+                        [
+                            {"text": "📝 Enter Name…", "callback_data": f"save|prompt|{arg}"},
+                            {"text": "⬅️ Back", "callback_data": "save|back"},
+                            {"text": "✖️ Cancel", "callback_data": "save|cancel"},
+                        ],
+                    ]
+                }
+                self._refresh_save_message(chat_id, message_id, text, markup)
+                self._answer_callback(callback_query["id"]) 
+            elif action == "quick" and arg in {"bg", "text"}:
+                # parts[3] suggestion
+                name = parts[3] if len(parts) > 3 else self._suggest_save_name(arg)
+                try:
+                    saved_path = self._save_named_image(name, arg)
+                    text = f"Saved {arg} image as '{os.path.basename(saved_path)}'."
+                    self._refresh_save_message(chat_id, message_id, text, {"inline_keyboard": []})
+                    self._answer_callback(callback_query["id"], text="Saved.")
+                except Exception as exc:
+                    logger.exception("Quick save failed: %s", exc)
+                    self._answer_callback(callback_query["id"], text="Save failed.")
+            elif action == "prompt" and arg in {"bg", "text"}:
+                # Ask name via ForceReply
+                try:
+                    self.pending_save[chat_id] = {"source": arg}
+                    self._api_post(
+                        "sendMessage",
+                        data={
+                            "chat_id": chat_id,
+                            "text": f"Enter a name to save the {arg} image:",
+                            "reply_markup": json.dumps({"force_reply": True, "input_field_placeholder": self._suggest_save_name(arg)}),
+                        },
+                    )
+                    self._answer_callback(callback_query["id"], text="Awaiting name…")
+                except Exception:
+                    logger.exception("Failed to send ForceReply for /save name.")
+            elif action == "back":
+                self._refresh_save_message(chat_id, message_id, "Save Image\n\nPick which image to save and optionally choose a name.", {
+                    "inline_keyboard": [
+                        [
+                            {"text": "Save Background", "callback_data": "save|choose|bg"},
+                            {"text": "Save Text", "callback_data": "save|choose|text"},
+                        ],
+                        [
+                            {"text": "✖️ Cancel", "callback_data": "save|cancel"},
+                        ],
+                    ]
+                })
+                self._answer_callback(callback_query["id"]) 
+            elif action == "cancel":
+                # Close out the save UI
+                self._refresh_save_message(chat_id, message_id, "Save cancelled.", {"inline_keyboard": []})
+                self._answer_callback(callback_query["id"], text="Cancelled.")
+            else:
+                self._answer_callback(callback_query["id"]) 
         else:
             self._answer_callback(callback_query["id"])
 
@@ -1064,6 +1123,43 @@ class TelegramBotListener:
             "  Saved files are under telegram/saved and appear in the picker.",
         ]
         self._send_message(chat_id, "\n".join(lines))
+
+    def _send_save_menu(self, chat_id):
+        text = (
+            "Save Image\n\n"
+            "Pick which image to save and optionally choose a name."
+        )
+        markup = {
+            "inline_keyboard": [
+                [
+                    {"text": "Save Background", "callback_data": "save|choose|bg"},
+                    {"text": "Save Text", "callback_data": "save|choose|text"},
+                ],
+                [
+                    {"text": "✖️ Cancel", "callback_data": "save|cancel"},
+                ],
+            ]
+        }
+        self._api_post("sendMessage", data={"chat_id": chat_id, "text": text, "reply_markup": json.dumps(markup)})
+
+    def _suggest_save_name(self, source):
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        prefix = "text" if source == "text" else "bg"
+        return f"{prefix}_{ts}"
+
+    def _refresh_save_message(self, chat_id, message_id, text, markup):
+        try:
+            self._api_post(
+                "editMessageText",
+                data={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "text": text,
+                    "reply_markup": json.dumps(markup) if markup else json.dumps({"inline_keyboard": []}),
+                },
+            )
+        except Exception:
+            logger.exception("Failed to update /save message.")
 
     def _answer_callback(self, callback_id, text=None, alert=False):
         data = {"callback_query_id": callback_id}
