@@ -416,6 +416,9 @@ class TelegramTextFlow:
     def set_bg_color(self, request, hex_code):
         request["bg_color_choice"] = hex_code
 
+    def set_wbadge(self, request, enabled: bool):
+        request["wbadge"] = bool(enabled)
+
     def await_saved(self, request):
         request["awaiting_saved"] = True
 
