@@ -379,6 +379,7 @@ class TelegramBotListener:
         elif flow_type == "txt":
             request_id = parts[1]
             action = parts[2] if len(parts) > 2 else None
+            param = parts[3] if len(parts) > 3 else None
             request = self.text_flow.get_request(request_id)
             if not request:
                 self._answer_callback(callback_query["id"], text="Text request expired.")
@@ -418,8 +419,23 @@ class TelegramBotListener:
             elif action == "background" and param:
                 self.text_flow.set_background(request, param)
                 label = dict(self.text_flow.BACKGROUND_OPTIONS).get(request["background"], request["background"])
-                # If choosing custom, prompt will be requested via set_prompt button
-                self._refresh_text_message(request)
+                if request.get("background") == "custom_ai":
+                    # Immediately request a custom prompt to reduce steps
+                    self.text_flow.await_custom_prompt(request)
+                    try:
+                        self._api_post(
+                            "sendMessage",
+                            data={
+                                "chat_id": request["chat_id"],
+                                "text": "Enter a background prompt for the image (or /skip).",
+                                "reply_markup": json.dumps({"force_reply": True}),
+                            },
+                        )
+                    except Exception:
+                        logger.exception("Failed to send ForceReply prompt after background select.")
+                    self._refresh_text_message(request, status="Awaiting background prompt…")
+                else:
+                    self._refresh_text_message(request)
                 self._answer_callback(callback_query["id"], text=f"Background: {label}")
             elif action == "set_prompt":
                 self.text_flow.await_custom_prompt(request)
