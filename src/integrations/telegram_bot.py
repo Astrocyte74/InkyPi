@@ -578,6 +578,20 @@ class TelegramBotListener:
                 except Exception:
                     logger.exception("Failed to send ForceReply for rename.")
                 self._answer_callback(callback_query["id"], text="Awaiting new name…")
+            elif action == "saved_preview":
+                # Send the selected saved image as a quick preview
+                name = (request.get("saved_name") or "").strip()
+                if not name:
+                    self._answer_callback(callback_query["id"], text="Pick an image first.")
+                    return
+                path = os.path.join(self.text_flow.storage_dir, "saved", f"{name}.png")
+                try:
+                    with Image.open(path) as img:
+                        self._send_photo(request["chat_id"], img, caption=f"Preview: {name}")
+                    self._answer_callback(callback_query["id"], text="Preview sent.")
+                except Exception as exc:
+                    logger.exception("Failed to send saved image preview: %s", exc)
+                    self._answer_callback(callback_query["id"], text="Preview failed.")
             elif action == "bg_color" and param:
                 self.text_flow.set_bg_color(request, param)
                 self._refresh_text_message(request)

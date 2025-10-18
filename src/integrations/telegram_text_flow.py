@@ -282,7 +282,11 @@ class TelegramTextFlow:
                 {"text": "✏️ Rename", "callback_data": f"txt|{request_id}|saved_rename"},
             ]
             keyboard.append(manage)
-            # Cancel or Generate
+            # Quick preview + Cancel/Generate
+            if request.get("saved_name"):
+                keyboard.append([
+                    {"text": "👁 Preview", "callback_data": f"txt|{request_id}|saved_preview"},
+                ])
             if request.get("saved_name"):
                 keyboard.append([
                     {"text": "🪄 Generate", "callback_data": f"txt|{request_id}|confirm"},
@@ -523,7 +527,7 @@ class TelegramTextFlow:
                 raise RuntimeError("Saved image not found.")
             background_path = candidate
         # If an image background is used, default placement to bottom band
-        if background_mode in {"ai_image", "custom_ai", "latest"}:
+        if background_mode in {"ai_image", "custom_ai", "latest", "saved"}:
             placement = "bottom"
 
         image = self._render_text_image(final_text, request.get("style"), background_path, background_color, placement)
