@@ -30,9 +30,10 @@ class TelegramTextFlow:
     BACKGROUND_OPTIONS = [
         ("none", "None"),
         ("latest", "Use Last Image"),
-        ("ai_image", "Auto AI Image"),
+        ("ai_image", "Auto-Generate Image"),
         ("color", "Solid Colour"),
-        ("custom_ai", "Custom AI Image…"),
+        ("saved", "Saved Image"),
+        ("custom_ai", "Custom Image (Prompt)"),
     ]
 
     # Inline AI background options for custom backgrounds
@@ -91,6 +92,8 @@ class TelegramTextFlow:
             "bg_palette": self.PALETTES[0][0],
             "bg_style_hint": "none",
             "bg_color_choice": None,
+            "awaiting_saved": False,
+            "saved_name": None,
             "final_text_preview": None,
         }
         self.requests[request_id] = data
@@ -142,6 +145,9 @@ class TelegramTextFlow:
             if len(prompt_preview) > 60:
                 prompt_preview = prompt_preview[:57] + "…"
             lines.append(f"Image prompt: {prompt_preview}")
+        if request.get("bg_selected") and request.get("background") == "saved":
+            saved_name = (request.get("saved_name") or "").strip() or "(none)"
+            lines.append(f"Saved image: {saved_name}")
         if status:
             lines.extend(["", status])
         return "\n".join(lines)
@@ -237,10 +243,19 @@ class TelegramTextFlow:
                 ])
         else:
             if request.get("bg_selected"):
-                keyboard.append([
-                    {"text": "🪄 Generate", "callback_data": f"txt|{request_id}|confirm"},
-                    {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
-                ])
+                bg = request.get("background")
+                ready = False
+                if bg in {"none", "ai_image", "latest"}:
+                    ready = True
+                elif bg == "color" and request.get("bg_color_choice"):
+                    ready = True
+                elif bg == "saved" and request.get("saved_name"):
+                    ready = True
+                if ready:
+                    keyboard.append([
+                        {"text": "🪄 Generate", "callback_data": f"txt|{request_id}|confirm"},
+                        {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
+                    ])
 
         return {"inline_keyboard": keyboard}
 
@@ -355,6 +370,11 @@ class TelegramTextFlow:
                     request["image_prompt"] = cleaned or request["text"].strip()
                 request["awaiting_prompt"] = False
                 return request
+            if request["chat_id"] == chat_id and request.get("awaiting_saved"):
+                cleaned = text.strip()
+                request["saved_name"] = cleaned
+                request["awaiting_saved"] = False
+                return request
         return None
 
     # --- Final rendering ---------------------------------------------------
@@ -394,6 +414,15 @@ class TelegramTextFlow:
             background_color = request.get("bg_color_choice")
             if not background_color:
                 raise RuntimeError("Choose a colour first.")
+        elif background_mode == "saved":
+            name = (request.get("saved_name") or "").strip()
+            if not name:
+                raise RuntimeError("Enter a saved image name.")
+            candidate = os.path.join(self.storage_dir, "saved", f"{name}.png")
+            if not os.path.exists(candidate):
+                logger.warning("Saved image %s not found under telegram/saved", candidate)
+                raise RuntimeError("Saved image not found.")
+            background_path = candidate
         # If an image background is used, default placement to bottom band
         if background_mode in {"ai_image", "custom_ai", "latest"}:
             placement = "bottom"

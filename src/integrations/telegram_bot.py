@@ -513,6 +513,20 @@ class TelegramBotListener:
                         )
                     except Exception:
                         logger.exception("Failed to send ForceReply prompt after background select.")
+                elif request.get("background") == "saved":
+                    # Ask for saved image name via ForceReply; avoid editing original message
+                    self.text_flow.await_saved(request)
+                    try:
+                        self._api_post(
+                            "sendMessage",
+                            data={
+                                "chat_id": request["chat_id"],
+                                "text": "Enter saved image name (from /save)",
+                                "reply_markup": json.dumps({"force_reply": True, "input_field_placeholder": "saved-name"}),
+                            },
+                        )
+                    except Exception:
+                        logger.exception("Failed to send ForceReply for saved image name.")
                 else:
                     self._refresh_text_message(request)
                 self._answer_callback(callback_query["id"], text=f"Background: {label}")
