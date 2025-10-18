@@ -747,6 +747,13 @@ class TelegramBotListener:
             return
 
         try:
+            # Precompute rewritten text (if enabled) and update summary before heavy work
+            try:
+                preview_text = self.text_flow.compute_final_text(request)
+                request["final_text_preview"] = preview_text
+                self._refresh_text_message(request, status="Rendering…")
+            except Exception:
+                logger.exception("Failed to compute preview text before rendering.")
             result = self.text_flow.finalize(request)
         except Exception as exc:
             logger.exception("Telegram text generation failed: %s", exc)

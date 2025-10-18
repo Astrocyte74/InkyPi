@@ -91,6 +91,7 @@ class TelegramTextFlow:
             "bg_palette": self.PALETTES[0][0],
             "bg_style_hint": "none",
             "bg_color_choice": None,
+            "final_text_preview": None,
         }
         self.requests[request_id] = data
         return data
@@ -122,10 +123,13 @@ class TelegramTextFlow:
             elif request.get("awaiting_prompt"):
                 background_label = "Custom AI (set prompt)"
         rewrite_label = "On" if request.get("rewrite") else "Off"
+        # Prefer showing the rewritten text preview if available
+        message_text = request.get("final_text_preview") if request.get("final_text_preview") else request.get("text")
+        message_header = "Message (rewritten):" if (request.get("final_text_preview") and request.get("rewrite")) else "Message:"
         lines = [
             "📝 Telegram Text",
             "",
-            f"Message:\n{request['text']}",
+            f"{message_header}\n{message_text}",
             "",
             f"Style: {style_label}",
             f"Rewrite: {rewrite_label}",
@@ -249,6 +253,7 @@ class TelegramTextFlow:
 
     def toggle_rewrite(self, request):
         request["rewrite"] = not request.get("rewrite", False)
+        request["final_text_preview"] = None
 
     def cycle_background(self, request):
         keys = [value for value, _ in self.BACKGROUND_OPTIONS]
@@ -271,6 +276,7 @@ class TelegramTextFlow:
 
     def set_rewrite(self, request, enabled: bool):
         request["rewrite"] = bool(enabled)
+        request["final_text_preview"] = None
 
     def set_background(self, request, background):
         keys = [value for value, _ in self.BACKGROUND_OPTIONS]
@@ -354,8 +360,9 @@ class TelegramTextFlow:
     # --- Final rendering ---------------------------------------------------
 
     def finalize(self, request):
-        final_text = request["text"]
-        if request.get("rewrite"):
+        # Use precomputed preview when available to keep summary consistent
+        final_text = request.get("final_text_preview") or request["text"]
+        if request.get("rewrite") and not request.get("final_text_preview"):
             try:
                 rewritten = self._rewrite_text(final_text)
                 if rewritten:
@@ -399,6 +406,21 @@ class TelegramTextFlow:
             "image_path": saved_path,
             "message": final_text,
         }
+
+    # --- Preview helpers ----------------------------------------------------
+
+    def compute_final_text(self, request):
+        """Compute the final text that will be rendered (with rewrite if enabled) without side-effects."""
+        text = request.get("text", "")
+        if request.get("rewrite"):
+            try:
+                rewritten = self._rewrite_text(text)
+                if rewritten:
+                    return rewritten
+            except Exception as exc:
+                logger.exception("Failed to rewrite Telegram text for preview: %s", exc)
+                # Fallback to original text
+        return text
 
     # --- Helpers -----------------------------------------------------------
 
