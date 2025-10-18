@@ -273,6 +273,13 @@ class TelegramTextFlow:
                 nav.append({"text": "Next ▶️", "callback_data": f"txt|{request_id}|saved_page|{page+1}"})
             if nav:
                 keyboard.append(nav)
+            # Manage row
+            manage = [
+                {"text": "🔄 Refresh", "callback_data": f"txt|{request_id}|saved_refresh"},
+                {"text": "🗑 Delete", "callback_data": f"txt|{request_id}|saved_delete"},
+                {"text": "✏️ Rename", "callback_data": f"txt|{request_id}|saved_rename"},
+            ]
+            keyboard.append(manage)
             # Manual entry fallback
             keyboard.append([
                 {"text": "Enter Name…", "callback_data": f"txt|{request_id}|saved_enter"},
@@ -524,6 +531,64 @@ class TelegramTextFlow:
                 logger.exception("Failed to rewrite Telegram text for preview: %s", exc)
                 # Fallback to original text
         return text
+
+    # --- Saved image helpers -----------------------------------------------
+
+    def _list_saved_names(self):
+        saved_dir = os.path.join(self.storage_dir, "saved")
+        if not os.path.isdir(saved_dir):
+            return []
+        items = []
+        try:
+            for fn in os.listdir(saved_dir):
+                if fn.lower().endswith(".png"):
+                    path = os.path.join(saved_dir, fn)
+                    try:
+                        mtime = os.path.getmtime(path)
+                    except OSError:
+                        mtime = 0
+                    name = os.path.splitext(fn)[0]
+                    items.append((mtime, name))
+        except OSError:
+            return []
+        # Newest first
+        items.sort(key=lambda t: t[0], reverse=True)
+        return [name for _, name in items]
+
+    def _sanitize_name(self, name):
+        cleaned = "".join(c if c.isalnum() or c in {"-", "_"} else "-" for c in (name or "").strip())
+        while "--" in cleaned:
+            cleaned = cleaned.replace("--", "-")
+        cleaned = cleaned.strip("-")
+        if not cleaned:
+            raise ValueError("Invalid name.")
+        return cleaned.lower()
+
+    def delete_saved(self, name):
+        saved_dir = os.path.join(self.storage_dir, "saved")
+        path = os.path.join(saved_dir, f"{name}.png")
+        if os.path.exists(path):
+            os.remove(path)
+        else:
+            raise FileNotFoundError("Saved image not found.")
+
+    def rename_saved(self, old, new):
+        saved_dir = os.path.join(self.storage_dir, "saved")
+        old_path = os.path.join(saved_dir, f"{old}.png")
+        if not os.path.exists(old_path):
+            raise FileNotFoundError("Original saved image not found.")
+        safe = self._sanitize_name(new)
+        new_path = os.path.join(saved_dir, f"{safe}.png")
+        if os.path.exists(new_path):
+            # Deduplicate with numeric suffix
+            i = 1
+            base = safe
+            while os.path.exists(new_path):
+                safe = f"{base}-{i}"
+                new_path = os.path.join(saved_dir, f"{safe}.png")
+                i += 1
+        os.rename(old_path, new_path)
+        return safe
 
     # --- Helpers -----------------------------------------------------------
 

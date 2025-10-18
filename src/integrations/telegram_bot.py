@@ -514,8 +514,8 @@ class TelegramBotListener:
                     except Exception:
                         logger.exception("Failed to send ForceReply prompt after background select.")
                 elif request.get("background") == "saved":
-                    # Show picker via inline keyboard (no edit before refresh)
-                    pass
+                    # Show picker via inline keyboard
+                    self._refresh_text_message(request)
                 else:
                     self._refresh_text_message(request)
                 self._answer_callback(callback_query["id"], text=f"Background: {label}")
@@ -546,6 +546,41 @@ class TelegramBotListener:
                     logger.exception("Failed to send ForceReply for saved image name.")
                 # Do not edit original message here
                 self._answer_callback(callback_query["id"], text="Awaiting name…")
+            elif action == "saved_refresh":
+                self._refresh_text_message(request)
+                self._answer_callback(callback_query["id"], text="Refreshed.")
+            elif action == "saved_delete":
+                name = (request.get("saved_name") or "").strip()
+                if not name:
+                    self._answer_callback(callback_query["id"], text="Pick an image first.")
+                    return
+                try:
+                    self.text_flow.delete_saved(name)
+                    request["saved_name"] = None
+                    self._refresh_text_message(request, status="Deleted.")
+                    self._answer_callback(callback_query["id"], text="Deleted.")
+                except Exception as exc:
+                    logger.exception("Delete saved failed: %s", exc)
+                    self._answer_callback(callback_query["id"], text="Delete failed.")
+            elif action == "saved_rename":
+                name = (request.get("saved_name") or "").strip()
+                if not name:
+                    self._answer_callback(callback_query["id"], text="Pick an image first.")
+                    return
+                request["awaiting_saved_rename"] = True
+                request["saved_rename_from"] = name
+                try:
+                    self._api_post(
+                        "sendMessage",
+                        data={
+                            "chat_id": request["chat_id"],
+                            "text": f"Enter new name for '{name}':",
+                            "reply_markup": json.dumps({"force_reply": True, "input_field_placeholder": name}),
+                        },
+                    )
+                except Exception:
+                    logger.exception("Failed to send ForceReply for rename.")
+                self._answer_callback(callback_query["id"], text="Awaiting new name…")
             elif action == "bg_color" and param:
                 self.text_flow.set_bg_color(request, param)
                 self._refresh_text_message(request)
