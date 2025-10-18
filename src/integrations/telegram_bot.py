@@ -172,10 +172,7 @@ class TelegramBotListener:
         if pending_request:
             # If the current background mode is custom, switch into AI image flow now
             if pending_request.get("background") == "custom_ai":
-                try:
-                    self._refresh_text_message(pending_request, status="Opening image options…")
-                except Exception:
-                    logger.exception("Failed to update message prior to starting background flow.")
+                # Do not edit the original message here to avoid UI shrinking in Telegram
                 self._start_custom_background_flow(pending_request)
             else:
                 self._refresh_text_message(pending_request, status="Background prompt updated.")
@@ -420,7 +417,7 @@ class TelegramBotListener:
                 self.text_flow.set_background(request, param)
                 label = dict(self.text_flow.BACKGROUND_OPTIONS).get(request["background"], request["background"])
                 if request.get("background") == "custom_ai":
-                    # Immediately request a custom prompt to reduce steps
+                    # Immediately request a custom prompt to reduce steps; avoid editing original message
                     self.text_flow.await_custom_prompt(request)
                     try:
                         self._api_post(
@@ -428,12 +425,11 @@ class TelegramBotListener:
                             data={
                                 "chat_id": request["chat_id"],
                                 "text": "Enter a background prompt for the image (or /skip).",
-                                "reply_markup": json.dumps({"force_reply": True}),
+                                "reply_markup": json.dumps({"force_reply": True, "input_field_placeholder": "Type background prompt"}),
                             },
                         )
                     except Exception:
                         logger.exception("Failed to send ForceReply prompt after background select.")
-                    self._refresh_text_message(request, status="Awaiting background prompt…")
                 else:
                     self._refresh_text_message(request)
                 self._answer_callback(callback_query["id"], text=f"Background: {label}")
@@ -445,12 +441,12 @@ class TelegramBotListener:
                         data={
                             "chat_id": request["chat_id"],
                             "text": "Reply with a background prompt (or /skip to reuse the note).",
-                            "reply_markup": json.dumps({"force_reply": True}),
+                            "reply_markup": json.dumps({"force_reply": True, "input_field_placeholder": "Type background prompt"}),
                         },
                     )
                 except Exception:
                     logger.exception("Failed to send ForceReply prompt request.")
-                self._refresh_text_message(request, status="Awaiting background prompt…")
+                # Do not edit original message; avoid visual shrink
                 self._answer_callback(callback_query["id"], text="Send background prompt…")
             elif action == "confirm":
                 if request.get("background") == "custom_ai" and request.get("awaiting_prompt"):
