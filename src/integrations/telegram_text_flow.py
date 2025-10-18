@@ -15,7 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramTextFlow:
-    """Manage Telegram `/txt` interactive flows."""
+    """Manage Telegram `/txt` interactive flows.
+
+    Enhanced to keep custom AI background configuration inline in the
+    same Telegram message (single-card flow).
+    """
 
     STYLE_OPTIONS = [
         ("simple", "📝 Simple"),
@@ -28,6 +32,28 @@ class TelegramTextFlow:
         ("latest", "Latest Display"),
         ("ai_image", "Auto AI Image"),
         ("custom_ai", "Custom AI Image…"),
+    ]
+
+    # Inline AI background options for custom backgrounds
+    AI_MODELS = [
+        ("dall-e-3", "DALL·E 3"),
+        ("gpt-image-1", "GPT Image 1"),
+        ("dall-e-2", "DALL·E 2"),
+    ]
+
+    QUALITY_OPTIONS = {
+        "dall-e-3": ["standard", "hd"],
+        "gpt-image-1": ["medium", "high", "low"],
+        "dall-e-2": ["standard"],
+    }
+
+    PALETTES = [("spectra6", "Colour"), ("bw", "Black & White")]
+    STYLE_HINTS = [
+        ("none", "🚫 None"),
+        ("illustration", "✏️ Illustration"),
+        ("drawing", "📝 Drawing"),
+        ("far_side", "🐄 Far Side"),
+        ("van_gogh", "🖌️ Van Gogh"),
     ]
 
     def __init__(self, device_config, display_manager, refresh_task, storage_dir):
@@ -56,6 +82,12 @@ class TelegramTextFlow:
             "custom_background": None,
             "image_prompt": text.strip(),
             "awaiting_prompt": False,
+            # Inline custom background configuration state
+            "bg_mode": "summary",  # summary | bg_config
+            "bg_model": self.AI_MODELS[0][0],
+            "bg_quality": self.QUALITY_OPTIONS[self.AI_MODELS[0][0]][0],
+            "bg_palette": self.PALETTES[0][0],
+            "bg_style_hint": "none",
         }
         self.requests[request_id] = data
         return data
@@ -128,6 +160,41 @@ class TelegramTextFlow:
                 ]
             }
 
+        # Background config subview for custom AI
+        if request.get("background") == "custom_ai" and request.get("bg_mode") == "bg_config" and not request.get("locked"):
+            model_label = dict(self.AI_MODELS).get(request.get("bg_model"), request.get("bg_model"))
+            quality_label = (request.get("bg_quality") or "").capitalize()
+            palette_label = dict(self.PALETTES).get(request.get("bg_palette"), request.get("bg_palette"))
+            style_hint_label = dict(self.STYLE_HINTS).get(request.get("bg_style_hint"), request.get("bg_style_hint"))
+
+            keyboard = [
+                [
+                    {"text": f"⚙️ Model: {model_label}", "callback_data": f"txt|{request_id}|bg_model"},
+                    {"text": f"📐 Quality: {quality_label}", "callback_data": f"txt|{request_id}|bg_quality"},
+                ],
+                [
+                    {"text": f"🎨 Palette: {palette_label}", "callback_data": f"txt|{request_id}|bg_palette"},
+                    {"text": f"🧭 Style: {style_hint_label}", "callback_data": f"txt|{request_id}|bg_style"},
+                ],
+            ]
+
+            preview = (request.get("image_prompt", "") or "(empty)").strip()
+            if len(preview) > 20:
+                preview = preview[:17] + "…"
+            keyboard.append(
+                [
+                    {"text": f"🖋 Prompt: {preview}", "callback_data": f"txt|{request_id}|set_prompt"},
+                ]
+            )
+
+            keyboard.append(
+                [
+                    {"text": "🚀 Generate", "callback_data": f"txt|{request_id}|confirm"},
+                    {"text": "⬅️ Back", "callback_data": f"txt|{request_id}|bg_back"},
+                ]
+            )
+            return {"inline_keyboard": keyboard}
+
         keyboard = [
             [
                 {
@@ -158,6 +225,15 @@ class TelegramTextFlow:
                     {
                         "text": f"🖋 Prompt: {preview}",
                         "callback_data": f"txt|{request_id}|set_prompt",
+                    }
+                ]
+            )
+
+            keyboard.append(
+                [
+                    {
+                        "text": "⚙️ Background Options",
+                        "callback_data": f"txt|{request_id}|bg_config",
                     }
                 ]
             )
@@ -195,6 +271,7 @@ class TelegramTextFlow:
             request["custom_background"] = None
             request["awaiting_prompt"] = False
         else:
+            request["bg_mode"] = "summary"
             if not request.get("image_prompt"):
                 request["image_prompt"] = request["text"].strip()
 
@@ -205,6 +282,37 @@ class TelegramTextFlow:
         request["awaiting_background"] = True
         request["custom_background"] = None
         request["awaiting_prompt"] = False
+
+    # --- Inline background config mutators ---------------------------------
+
+    def enter_bg_config(self, request):
+        request["bg_mode"] = "bg_config"
+
+    def exit_bg_config(self, request):
+        request["bg_mode"] = "summary"
+
+    def cycle_bg_model(self, request):
+        keys = [k for k, _ in self.AI_MODELS]
+        idx = keys.index(request.get("bg_model", keys[0]))
+        request["bg_model"] = keys[(idx + 1) % len(keys)]
+        allowed = self.QUALITY_OPTIONS.get(request["bg_model"], ["standard"])
+        if request.get("bg_quality") not in allowed:
+            request["bg_quality"] = allowed[0]
+
+    def cycle_bg_quality(self, request):
+        allowed = self.QUALITY_OPTIONS.get(request.get("bg_model"), [request.get("bg_quality")])
+        idx = allowed.index(request.get("bg_quality", allowed[0]))
+        request["bg_quality"] = allowed[(idx + 1) % len(allowed)]
+
+    def cycle_bg_palette(self, request):
+        keys = [k for k, _ in self.PALETTES]
+        idx = keys.index(request.get("bg_palette", keys[0]))
+        request["bg_palette"] = keys[(idx + 1) % len(keys)]
+
+    def cycle_bg_style(self, request):
+        keys = [k for k, _ in self.STYLE_HINTS]
+        idx = keys.index(request.get("bg_style_hint", keys[0]))
+        request["bg_style_hint"] = keys[(idx + 1) % len(keys)]
 
     def attach_custom_background(self, request_id, background_path):
         request = self.requests.get(request_id)
@@ -254,7 +362,13 @@ class TelegramTextFlow:
         elif background_mode == "custom_ai":
             background_path = request.get("custom_background")
             if not background_path:
-                raise RuntimeError("Custom background not ready yet.")
+                background_path = self._generate_ai_background(
+                    request.get("image_prompt") or final_text,
+                    bg_model=request.get("bg_model"),
+                    bg_quality=request.get("bg_quality"),
+                    bg_palette=request.get("bg_palette"),
+                    style_hint=request.get("bg_style_hint"),
+                )
 
         image = self._render_text_image(final_text, request.get("style"), background_path)
         saved_path = self._save_image(image)
@@ -288,7 +402,7 @@ class TelegramTextFlow:
         logger.info("Rewrote Telegram text: %s -> %s", text, rewritten)
         return rewritten.strip()
 
-    def _generate_ai_background(self, prompt_text):
+    def _generate_ai_background(self, prompt_text, bg_model=None, bg_quality=None, bg_palette=None, style_hint=None):
         ai_plugin = self._get_ai_plugin()
         if not ai_plugin:
             raise RuntimeError("AI Image plugin is required to generate backgrounds.")
@@ -297,12 +411,18 @@ class TelegramTextFlow:
         if not api_key:
             raise RuntimeError("OPEN AI API Key not configured.")
 
+        model = (bg_model or "dall-e-3").strip()
+        quality = (bg_quality or (self.QUALITY_OPTIONS.get(model) or ["standard"])[0]).strip()
+        palette = (bg_palette or "spectra6").strip().lower()
+
         settings = {
             "textPrompt": prompt_text,
-            "imageModel": "dall-e-3",
-            "quality": "standard",
-            "palette": "spectra6",
+            "imageModel": model,
+            "quality": quality,
+            "palette": palette,
         }
+        if style_hint and style_hint != "none":
+            settings["styleHint"] = style_hint
         image = ai_plugin.generate_image(settings, self.device_config)
         filename = datetime.utcnow().strftime("telegram_text_bg_%Y%m%d_%H%M%S.png")
         path = os.path.join(self.storage_dir, filename)

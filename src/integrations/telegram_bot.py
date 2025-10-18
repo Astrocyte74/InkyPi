@@ -398,29 +398,57 @@ class TelegramBotListener:
                 self._answer_callback(callback_query["id"], text=f"Background: {label}")
             elif action == "set_prompt":
                 self.text_flow.await_custom_prompt(request)
-                self._refresh_text_message(request, status="Send background prompt or /skip to reuse the note text.")
-                self._answer_callback(callback_query["id"], text="Send background prompt now…")
+                try:
+                    self._api_post(
+                        "sendMessage",
+                        data={
+                            "chat_id": request["chat_id"],
+                            "text": "Reply with a background prompt (or /skip to reuse the note).",
+                            "reply_markup": json.dumps({"force_reply": True}),
+                        },
+                    )
+                except Exception:
+                    logger.exception("Failed to send ForceReply prompt request.")
+                self._refresh_text_message(request, status="Awaiting background prompt…")
+                self._answer_callback(callback_query["id"], text="Send background prompt…")
+            elif action == "bg_config":
+                self.text_flow.enter_bg_config(request)
+                self._refresh_text_message(request)
+                self._answer_callback(callback_query["id"], text="Configure background…")
+            elif action == "bg_back":
+                self.text_flow.exit_bg_config(request)
+                self._refresh_text_message(request)
+                self._answer_callback(callback_query["id"], text="Back to summary.")
+            elif action == "bg_model":
+                self.text_flow.cycle_bg_model(request)
+                self._refresh_text_message(request)
+                self._answer_callback(callback_query["id"], text="Model updated.")
+            elif action == "bg_quality":
+                self.text_flow.cycle_bg_quality(request)
+                self._refresh_text_message(request)
+                self._answer_callback(callback_query["id"], text="Quality updated.")
+            elif action == "bg_palette":
+                self.text_flow.cycle_bg_palette(request)
+                self._refresh_text_message(request)
+                self._answer_callback(callback_query["id"], text="Palette updated.")
+            elif action == "bg_style":
+                self.text_flow.cycle_bg_style(request)
+                self._refresh_text_message(request)
+                self._answer_callback(callback_query["id"], text="Style updated.")
             elif action == "confirm":
-                if request.get("background") == "custom_ai":
-                    if request.get("awaiting_prompt"):
-                        self._refresh_text_message(request, status="Enter a background prompt before continuing.")
-                        self._answer_callback(callback_query["id"], text="Send a background prompt first.")
-                        return
-                    request["locked"] = True
-                    self.text_flow.mark_custom_background_pending(request)
-                    self._refresh_text_message(request, status="Select background image options…")
-                    self._answer_callback(callback_query["id"], text="Configure background image…")
-                    self._start_custom_background_flow(request)
-                else:
-                    request["locked"] = True
-                    self._refresh_text_message(request, status="Rendering…")
-                    self._answer_callback(callback_query["id"], text="Rendering text…")
-                    threading.Thread(
-                        target=self._process_text_request,
-                        args=(request_id,),
-                        name=f"TelegramText-{request_id}",
-                        daemon=True,
-                    ).start()
+                if request.get("background") == "custom_ai" and request.get("awaiting_prompt"):
+                    self._refresh_text_message(request, status="Enter a background prompt before continuing.")
+                    self._answer_callback(callback_query["id"], text="Send a background prompt first.")
+                    return
+                request["locked"] = True
+                self._refresh_text_message(request, status="Rendering…")
+                self._answer_callback(callback_query["id"], text="Rendering…")
+                threading.Thread(
+                    target=self._process_text_request,
+                    args=(request_id,),
+                    name=f"TelegramText-{request_id}",
+                    daemon=True,
+                ).start()
             elif action == "cancel":
                 self._refresh_text_message(request, status="Cancelled.")
                 self.text_flow.cancel_request(request_id)
