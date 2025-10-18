@@ -275,7 +275,6 @@ class TelegramTextFlow:
                 keyboard.append(nav)
             # Manage row
             manage = [
-                {"text": "🔄 Refresh", "callback_data": f"txt|{request_id}|saved_refresh"},
                 {"text": "🗑 Delete", "callback_data": f"txt|{request_id}|saved_delete"},
                 {"text": "✏️ Rename", "callback_data": f"txt|{request_id}|saved_rename"},
             ]
@@ -285,6 +284,12 @@ class TelegramTextFlow:
                 {"text": "Enter Name…", "callback_data": f"txt|{request_id}|saved_enter"},
                 {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
             ])
+            # Show Generate when a saved image is selected
+            if request.get("saved_name"):
+                keyboard.append([
+                    {"text": "🪄 Generate", "callback_data": f"txt|{request_id}|confirm"},
+                    {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
+                ])
             # Generate handled by common gating below
         else:
             if request.get("bg_selected"):
@@ -455,6 +460,17 @@ class TelegramTextFlow:
                 cleaned = text.strip()
                 request["saved_name"] = cleaned
                 request["awaiting_saved"] = False
+                return request
+            if request["chat_id"] == chat_id and request.get("awaiting_saved_rename"):
+                newname = text.strip()
+                oldname = request.get("saved_rename_from")
+                try:
+                    final_name = self.rename_saved(oldname, newname)
+                    request["saved_name"] = final_name
+                except Exception:
+                    logger.exception("Rename saved failed")
+                request["awaiting_saved_rename"] = False
+                request["saved_rename_from"] = None
                 return request
         return None
 

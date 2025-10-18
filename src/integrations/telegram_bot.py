@@ -546,9 +546,6 @@ class TelegramBotListener:
                     logger.exception("Failed to send ForceReply for saved image name.")
                 # Do not edit original message here
                 self._answer_callback(callback_query["id"], text="Awaiting name…")
-            elif action == "saved_refresh":
-                self._refresh_text_message(request)
-                self._answer_callback(callback_query["id"], text="Refreshed.")
             elif action == "saved_delete":
                 name = (request.get("saved_name") or "").strip()
                 if not name:
