@@ -514,22 +514,38 @@ class TelegramBotListener:
                     except Exception:
                         logger.exception("Failed to send ForceReply prompt after background select.")
                 elif request.get("background") == "saved":
-                    # Ask for saved image name via ForceReply; avoid editing original message
-                    self.text_flow.await_saved(request)
-                    try:
-                        self._api_post(
-                            "sendMessage",
-                            data={
-                                "chat_id": request["chat_id"],
-                                "text": "Enter saved image name (from /save)",
-                                "reply_markup": json.dumps({"force_reply": True, "input_field_placeholder": "saved-name"}),
-                            },
-                        )
-                    except Exception:
-                        logger.exception("Failed to send ForceReply for saved image name.")
+                    # Show picker via inline keyboard (no edit before refresh)
+                    pass
                 else:
                     self._refresh_text_message(request)
                 self._answer_callback(callback_query["id"], text=f"Background: {label}")
+            elif action == "saved_pick" and param:
+                self.text_flow.set_saved_name(request, param)
+                self._refresh_text_message(request)
+                self._answer_callback(callback_query["id"], text=f"Saved: {param}")
+            elif action == "saved_page" and param:
+                try:
+                    page = int(param)
+                except ValueError:
+                    page = 0
+                request["saved_page"] = max(0, page)
+                self._refresh_text_message(request)
+                self._answer_callback(callback_query["id"], text=f"Page {request['saved_page']+1}")
+            elif action == "saved_enter":
+                self.text_flow.await_saved(request)
+                try:
+                    self._api_post(
+                        "sendMessage",
+                        data={
+                            "chat_id": request["chat_id"],
+                            "text": "Enter saved image name (from /save)",
+                            "reply_markup": json.dumps({"force_reply": True, "input_field_placeholder": "saved-name"}),
+                        },
+                    )
+                except Exception:
+                    logger.exception("Failed to send ForceReply for saved image name.")
+                # Do not edit original message here
+                self._answer_callback(callback_query["id"], text="Awaiting name…")
             elif action == "bg_color" and param:
                 self.text_flow.set_bg_color(request, param)
                 self._refresh_text_message(request)

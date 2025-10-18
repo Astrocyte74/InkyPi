@@ -94,6 +94,7 @@ class TelegramTextFlow:
             "bg_color_choice": None,
             "awaiting_saved": False,
             "saved_name": None,
+            "saved_page": 0,
             "final_text_preview": None,
         }
         self.requests[request_id] = data
@@ -242,6 +243,42 @@ class TelegramTextFlow:
                     {"text": "🪄 Generate", "callback_data": f"txt|{request_id}|confirm"},
                     {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
                 ])
+        elif request.get("bg_selected") and request.get("background") == "saved":
+            # Saved image picker with pagination
+            names = self._list_saved_names()
+            page = int(request.get("saved_page") or 0)
+            page_size = 6
+            total_pages = max(1, (len(names) + page_size - 1) // page_size)
+            if page >= total_pages:
+                page = total_pages - 1
+                request["saved_page"] = page
+            start = page * page_size
+            end = start + page_size
+            for chunk_start in range(start, min(end, len(names)), 3):
+                row = []
+                for name in names[chunk_start: min(chunk_start + 3, len(names))]:
+                    label = name
+                    if len(label) > 18:
+                        label = label[:15] + "…"
+                    if request.get("saved_name") == name:
+                        label = f"{label} ✅"
+                    row.append({"text": label, "callback_data": f"txt|{request_id}|saved_pick|{name}"})
+                if row:
+                    keyboard.append(row)
+            # Pagination controls
+            nav = []
+            if total_pages > 1 and page > 0:
+                nav.append({"text": "◀️ Prev", "callback_data": f"txt|{request_id}|saved_page|{page-1}"})
+            if total_pages > 1 and page < total_pages - 1:
+                nav.append({"text": "Next ▶️", "callback_data": f"txt|{request_id}|saved_page|{page+1}"})
+            if nav:
+                keyboard.append(nav)
+            # Manual entry fallback
+            keyboard.append([
+                {"text": "Enter Name…", "callback_data": f"txt|{request_id}|saved_enter"},
+                {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
+            ])
+            # Generate handled by common gating below
         else:
             if request.get("bg_selected"):
                 bg = request.get("background")
@@ -259,6 +296,27 @@ class TelegramTextFlow:
                     ])
 
         return {"inline_keyboard": keyboard}
+
+    def _list_saved_names(self):
+        saved_dir = os.path.join(self.storage_dir, "saved")
+        if not os.path.isdir(saved_dir):
+            return []
+        items = []
+        try:
+            for fn in os.listdir(saved_dir):
+                if fn.lower().endswith(".png"):
+                    path = os.path.join(saved_dir, fn)
+                    try:
+                        mtime = os.path.getmtime(path)
+                    except OSError:
+                        mtime = 0
+                    name = os.path.splitext(fn)[0]
+                    items.append((mtime, name))
+        except OSError:
+            return []
+        # Newest first
+        items.sort(key=lambda t: t[0], reverse=True)
+        return [name for _, name in items]
 
     # --- Mutators ----------------------------------------------------------
 
