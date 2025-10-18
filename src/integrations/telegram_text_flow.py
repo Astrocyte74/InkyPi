@@ -367,6 +367,7 @@ class TelegramTextFlow:
         background_path = None
         background_color = None
         background_mode = request.get("background")
+        placement = "center"
         if background_mode == "latest":
             # Prefer the latest base image saved by Telegram (non-text),
             # fall back to the displayed image if not available.
@@ -386,8 +387,11 @@ class TelegramTextFlow:
             background_color = request.get("bg_color_choice")
             if not background_color:
                 raise RuntimeError("Choose a colour first.")
+        # If an image background is used, default placement to bottom band
+        if background_mode in {"ai_image", "custom_ai", "latest"}:
+            placement = "bottom"
 
-        image = self._render_text_image(final_text, request.get("style"), background_path, background_color)
+        image = self._render_text_image(final_text, request.get("style"), background_path, background_color, placement)
         saved_path = self._save_image(image)
         self._display_image(image, final_text)
 
@@ -447,7 +451,7 @@ class TelegramTextFlow:
         logger.info("Generated AI background for Telegram text at %s", path)
         return path
 
-    def _render_text_image(self, text, style, background_path, background_color=None):
+    def _render_text_image(self, text, style, background_path, background_color=None, placement="center"):
         plugin = self._get_text_plugin()
         if not plugin:
             raise RuntimeError("Telegram Text plugin is not registered.")
@@ -459,6 +463,8 @@ class TelegramTextFlow:
         }
         if background_color:
             settings["background_color"] = background_color
+        if placement:
+            settings["placement"] = placement
         return plugin.generate_image(settings, self.device_config)
 
     def _save_image(self, image):

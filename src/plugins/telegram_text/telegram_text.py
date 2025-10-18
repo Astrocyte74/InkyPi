@@ -32,6 +32,9 @@ class TelegramText(BasePlugin):
 
         background_path = settings.get("background_path")
         background_color = settings.get("background_color") or self.DEFAULT_BG
+        placement = (settings.get("placement") or "center").lower()
+        if placement not in {"center", "bottom"}:
+            placement = "center"
 
         width, height = device_config.get_resolution()
         if device_config.get_config("orientation") == "vertical":
@@ -41,11 +44,18 @@ class TelegramText(BasePlugin):
 
         font_size = self._initial_font_size(width, height)
         font = ImageFont.truetype(self.FONT_PATH, font_size)
-        max_text_width = int(width * 0.78)
-        max_text_height = int(height * 0.78)
+        if placement == "bottom":
+            max_text_width = int(width * 0.90)
+            # Reserve a bottom band for text; adapt font to fit this area
+            area_ratio = float(settings.get("text_area_ratio") or 0.35)
+            area_ratio = min(max(area_ratio, 0.2), 0.6)  # clamp for sanity
+            max_text_height = int(height * area_ratio)
+        else:
+            max_text_width = int(width * 0.78)
+            max_text_height = int(height * 0.78)
         text_lines, font = self._wrap_text(base_image, text, font, max_text_width, max_text_height)
 
-        rendered = self._draw_text(base_image, text_lines, font, style)
+        rendered = self._draw_text(base_image, text_lines, font, style, placement)
         return rendered.convert("RGB")
 
     def _prepare_background(self, width, height, background_path, background_color):
@@ -106,7 +116,7 @@ class TelegramText(BasePlugin):
     def _line_spacing(self, font):
         return int(font.size * 0.35)
 
-    def _draw_text(self, base_image, lines, font, style):
+    def _draw_text(self, base_image, lines, font, style, placement):
         width, height = base_image.size
         overlay = Image.new("RGBA", base_image.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
@@ -120,7 +130,13 @@ class TelegramText(BasePlugin):
         padding_y = font.size * 0.8
 
         x = (width - text_width) / 2
-        y = (height - text_height) / 2
+        if placement == "bottom":
+            margin_bottom = int(font.size * 0.6)
+            y = height - (text_height + padding_y) - margin_bottom
+            if y < padding_y:
+                y = padding_y
+        else:
+            y = (height - text_height) / 2
 
         if style == "caption":
             box_coords = (
