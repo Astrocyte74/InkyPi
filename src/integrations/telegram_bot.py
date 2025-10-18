@@ -472,6 +472,10 @@ class TelegramBotListener:
                 self._refresh_ai_message(request)
                 palette_label = self._get_palette_label(request["palette"])
                 self._answer_callback(callback_query["id"], text=f"Palette: {palette_label}.")
+            elif action == "wbadge" and param:
+                request["wbadge"] = (param == "on")
+                self._refresh_ai_message(request)
+                self._answer_callback(callback_query["id"], text=f"Weather badge: {'On' if request.get('wbadge') else 'Off'}")
             elif action == "generate":
                 self._answer_callback(callback_query["id"], text="Generating image…")
                 request["locked"] = True
@@ -520,6 +524,10 @@ class TelegramBotListener:
                 status = "On" if request["rewrite"] else "Off"
                 self._refresh_text_message(request)
                 self._answer_callback(callback_query["id"], text=f"Rewrite: {status}")
+            elif action == "wbadge" and param:
+                self.text_flow.set_wbadge(request, param == "on")
+                self._refresh_text_message(request)
+                self._answer_callback(callback_query["id"], text=f"Weather badge: {'On' if request.get('wbadge') else 'Off'}")
             elif action == "cycle_background":
                 # Backward compatibility
                 self.text_flow.cycle_background(request)
@@ -1072,6 +1080,16 @@ class TelegramBotListener:
                 }
             ]
         )
+        # Weather badge toggle
+        w_on = request.get("wbadge", False)
+        keyboard.append(
+            [
+                {
+                    "text": f"🌤 Badge: {'On' if w_on else 'Off'}",
+                    "callback_data": f"ai|{request_id}|wbadge|{'off' if w_on else 'on'}",
+                }
+            ]
+        )
 
         keyboard.append(
             [
@@ -1289,13 +1307,19 @@ class TelegramBotListener:
                 logger.exception("Failed to send photo back to Telegram")
 
         def finalize():
-            self.display_manager.display_image(image, image_settings=plugin_config.get("image_settings", []))
+            final_img = image
+            try:
+                if request.get("wbadge"):
+                    final_img = self.text_flow._overlay_weather_badge(image)  # pylint: disable=protected-access
+            except Exception:
+                logger.exception("Failed to overlay weather badge for AI image.")
+            self.display_manager.display_image(final_img, image_settings=plugin_config.get("image_settings", []))
             current_dt = (
                 self.refresh_task._get_current_datetime()
                 if hasattr(self.refresh_task, "_get_current_datetime")
                 else datetime.utcnow()
             )
-            image_hash = compute_image_hash(image)
+            image_hash = compute_image_hash(final_img)
             refresh_info = RefreshInfo(
                 refresh_type="Telegram AI",
                 plugin_id="ai_image",

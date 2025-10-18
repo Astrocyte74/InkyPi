@@ -97,6 +97,7 @@ class TelegramTextFlow:
             "awaiting_saved": False,
             "saved_name": None,
             "saved_page": 0,
+            "wbadge": False,
             "final_text_preview": None,
         }
         self.requests[request_id] = data
@@ -211,6 +212,17 @@ class TelegramTextFlow:
             style_row,
             [{"text": "Rewrite:", "callback_data": f"txt|{request_id}|noop"}],
             rewrite_row,
+            [{"text": "Weather Badge:", "callback_data": f"txt|{request_id}|noop"}],
+            [
+                {
+                    "text": f"Off {'✅' if not request.get('wbadge') else ''}",
+                    "callback_data": f"txt|{request_id}|wbadge|off",
+                },
+                {
+                    "text": f"On {'✅' if request.get('wbadge') else ''}",
+                    "callback_data": f"txt|{request_id}|wbadge|on",
+                },
+            ],
             [{"text": "Pick background:", "callback_data": f"txt|{request_id}|noop"}],
         ]
         keyboard.extend(bg_rows)
