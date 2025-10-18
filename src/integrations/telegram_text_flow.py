@@ -368,7 +368,10 @@ class TelegramTextFlow:
         background_color = None
         background_mode = request.get("background")
         if background_mode == "latest":
-            candidate = self.device_config.current_image_file
+            # Prefer the latest base image saved by Telegram (non-text),
+            # fall back to the displayed image if not available.
+            telegram_latest = os.path.join(self.storage_dir, "latest.png")
+            candidate = telegram_latest if os.path.exists(telegram_latest) else self.device_config.current_image_file
             if candidate and os.path.exists(candidate):
                 background_path = candidate
             else:
