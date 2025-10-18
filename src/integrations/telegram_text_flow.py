@@ -147,8 +147,11 @@ class TelegramTextFlow:
                 prompt_preview = prompt_preview[:57] + "…"
             lines.append(f"Image prompt: {prompt_preview}")
         if request.get("bg_selected") and request.get("background") == "saved":
-            saved_name = (request.get("saved_name") or "").strip() or "(none)"
-            lines.append(f"Saved image: {saved_name}")
+            saved_name = (request.get("saved_name") or "").strip()
+            if saved_name:
+                lines.append(f"Selected: {saved_name} ✅")
+            else:
+                lines.append("Saved image: (none)")
         if status:
             lines.extend(["", status])
         return "\n".join(lines)
@@ -279,15 +282,14 @@ class TelegramTextFlow:
                 {"text": "✏️ Rename", "callback_data": f"txt|{request_id}|saved_rename"},
             ]
             keyboard.append(manage)
-            # Manual entry fallback
-            keyboard.append([
-                {"text": "Enter Name…", "callback_data": f"txt|{request_id}|saved_enter"},
-                {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
-            ])
-            # Show Generate when a saved image is selected
+            # Cancel or Generate
             if request.get("saved_name"):
                 keyboard.append([
                     {"text": "🪄 Generate", "callback_data": f"txt|{request_id}|confirm"},
+                    {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
+                ])
+            else:
+                keyboard.append([
                     {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
                 ])
             # Generate handled by common gating below
