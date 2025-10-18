@@ -98,6 +98,8 @@ class TelegramBotListener:
         self.pending_requests = {}
         self.text_flow = TelegramTextFlow(self.device_config, self.display_manager, self.refresh_task, self.storage_dir)
         self.pending_save = {}
+        self.pending_txt_bg = {}
+        self.load_filters = {}
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -193,10 +195,47 @@ class TelegramBotListener:
                 self._refresh_text_message(pending_request, status="Background prompt updated.")
             return
 
+        # Handle pending /load -> Use as Background message entry
+        if self.pending_txt_bg.get(chat_id):
+            saved_name = self.pending_txt_bg.pop(chat_id)
+            message = text
+            request = self.text_flow.create_request(chat_id, message)
+            self.text_flow.set_background(request, "saved")
+            self.text_flow.set_saved_name(request, saved_name)
+            summary = self.text_flow.format_summary(request)
+            markup = self.text_flow.build_keyboard(request)
+            self._api_post(
+                "sendMessage",
+                data={
+                    "chat_id": chat_id,
+                    "text": summary,
+                    "reply_markup": json.dumps(markup),
+                },
+            )
+            return
+
         if text.lower() in {"/start", "/help"}:
             self._send_help(chat_id)
         elif text.lower() == "/status":
             self._send_status(chat_id)
+        elif text.lower().startswith("/load"):
+            parts = text.split(maxsplit=2)
+            name = parts[1].strip() if len(parts) >= 2 else None
+            if name:
+                path = os.path.join(self.text_flow.storage_dir, "saved", f"{name}.png")
+                if not os.path.exists(path):
+                    self._send_message(chat_id, f"Saved image '{name}' not found.")
+                    return
+                try:
+                    with Image.open(path) as img:
+                        self.display_manager.display_image(img)
+                    self._send_message(chat_id, f"Loaded '{name}' to display.")
+                except Exception as exc:
+                    logger.exception("Failed to load saved image: %s", exc)
+                    self._send_message(chat_id, f"Load failed: {exc}")
+            else:
+                self._send_load_menu(chat_id)
+            return
         elif text.lower().startswith("/save"):
             # Usage: /save [bg|text] <name>
             parts = text.split(maxsplit=2)
@@ -558,12 +597,14 @@ class TelegramBotListener:
                 request["awaiting_saved_rename"] = True
                 request["saved_rename_from"] = name
                 try:
+                    # Show placeholder without internal prefix
+                    base = self.text_flow._strip_prefix(name)  # pylint: disable=protected-access
                     self._api_post(
                         "sendMessage",
                         data={
                             "chat_id": request["chat_id"],
-                            "text": f"Enter new name for '{name}':",
-                            "reply_markup": json.dumps({"force_reply": True, "input_field_placeholder": name}),
+                            "text": f"Enter new name for '{base}':",
+                            "reply_markup": json.dumps({"force_reply": True, "input_field_placeholder": base}),
                         },
                     )
                 except Exception:
@@ -638,19 +679,28 @@ class TelegramBotListener:
             message_id = callback_query.get("message", {}).get("message_id")
             action = parts[1] if len(parts) > 1 else None
             arg = parts[2] if len(parts) > 2 else None
-            if action == "choose" and arg in {"bg", "text", "txtbg"}:
-                suggestion = self._suggest_save_name(arg)
-                text = (
-                    f"Save {'Background' if arg=='bg' else ('Composite' if arg=='text' else 'Last Background (/txt)')}\n\n"
-                    f"Suggested name: {suggestion}"
+            if action == "choose" and arg in {"bg", "text", "txtbg", "bgauto"}:
+                # Resolve auto background to last /txt background if available
+                eff_source = arg
+                if arg == "bgauto":
+                    last_bg = os.path.join(self.text_flow.storage_dir, "last_text_background.png")
+                    eff_source = "txtbg" if os.path.exists(last_bg) else "bg"
+                suggestion = self._suggest_save_name(eff_source)
+                pretty = (
+                    "Background (Auto)" if arg == "bgauto" else (
+                        "Background" if eff_source == "bg" else (
+                            "Last Background (/txt)" if eff_source == "txtbg" else "Last Background and Text"
+                        )
+                    )
                 )
+                text = f"Save {pretty}\n\nSuggested name: {suggestion}"
                 markup = {
                     "inline_keyboard": [
                         [
-                            {"text": f"Quick Save as '{suggestion}'", "callback_data": f"save|quick|{arg}|{suggestion}"},
+                            {"text": f"Quick Save as '{suggestion}'", "callback_data": f"save|quick|{eff_source}|{suggestion}"},
                         ],
                         [
-                            {"text": "📝 Enter Name…", "callback_data": f"save|prompt|{arg}"},
+                            {"text": "📝 Enter Name…", "callback_data": f"save|prompt|{eff_source}"},
                             {"text": "⬅️ Back", "callback_data": "save|back"},
                             {"text": "✖️ Cancel", "callback_data": "save|cancel"},
                         ],
@@ -700,6 +750,174 @@ class TelegramBotListener:
             elif action == "cancel":
                 # Close out the save UI
                 self._refresh_save_message(chat_id, message_id, "Save cancelled.", {"inline_keyboard": []})
+                self._answer_callback(callback_query["id"], text="Cancelled.")
+            else:
+                self._answer_callback(callback_query["id"]) 
+        elif flow_type == "load":
+            chat_id = callback_query.get("message", {}).get("chat", {}).get("id")
+            message_id = callback_query.get("message", {}).get("message_id")
+            action = parts[1] if len(parts) > 1 else None
+            arg = parts[2] if len(parts) > 2 else None
+            if action == "pick" and arg:
+                name = arg
+                text = f"Load Saved Image\n\nSelected: {name}"
+                markup = {
+                    "inline_keyboard": [
+                        [
+                            {"text": "👁 Preview", "callback_data": f"load|preview|{name}"},
+                            {"text": "🖼 Display Now", "callback_data": f"load|display|{name}"},
+                        ],
+                        [
+                            {"text": "📝 Use as Background", "callback_data": f"load|usetxt|{name}"},
+                        ],
+                        [
+                            {"text": "⬅️ Back", "callback_data": "load|back"},
+                            {"text": "✖️ Cancel", "callback_data": "load|cancel"},
+                        ],
+                    ]
+                }
+                self._refresh_load_message(chat_id, message_id, text, markup)
+                self._answer_callback(callback_query["id"]) 
+            elif action == "preview" and arg:
+                name = arg
+                path = os.path.join(self.text_flow.storage_dir, "saved", f"{name}.png")
+                try:
+                    with Image.open(path) as img:
+                        self._send_photo(chat_id, img, caption=f"Preview: {name}")
+                    self._answer_callback(callback_query["id"], text="Preview sent.")
+                except Exception as exc:
+                    logger.exception("Load preview failed: %s", exc)
+                    self._answer_callback(callback_query["id"], text="Preview failed.")
+            elif action == "page" and arg is not None:
+                try:
+                    page = int(arg)
+                except ValueError:
+                    page = 0
+                # Rebuild list on requested page by editing current message
+                try:
+                    names = self.text_flow._list_saved_names()  # pylint: disable=protected-access
+                except Exception:
+                    logger.exception("Failed to list saved images.")
+                    names = []
+                page_size = 6
+                total_pages = max(1, (len(names) + page_size - 1) // page_size)
+                page = max(0, min(page, total_pages - 1))
+                start = page * page_size
+                end = start + page_size
+                kb = []
+                row = []
+                for name in names[start:end]:
+                    base = self.text_flow._strip_prefix(name)  # pylint: disable=protected-access
+                    label = base if len(base) <= 18 else (base[:15] + "…")
+                    row.append({"text": label, "callback_data": f"load|pick|{name}"})
+                    if len(row) == 3:
+                        kb.append(row)
+                        row = []
+                if row:
+                    kb.append(row)
+                nav = []
+                if total_pages > 1 and page > 0:
+                    nav.append({"text": "◀️ Prev", "callback_data": f"load|page|{page-1}"})
+                if total_pages > 1 and page < total_pages - 1:
+                    nav.append({"text": "Next ▶️", "callback_data": f"load|page|{page+1}"})
+                if nav:
+                    kb.append(nav)
+                last_bg = os.path.join(self.text_flow.storage_dir, "last_text_background.png")
+                if os.path.exists(last_bg):
+                    kb.append([{ "text": "🖼 Display Last Background (/txt)", "callback_data": "load|display_last" }])
+                kb.append([{ "text": "✖️ Cancel", "callback_data": "load|cancel" }])
+                self._refresh_load_message(chat_id, message_id, "Load Saved Image\n\nPick an image to preview, display, or use as background.", {"inline_keyboard": kb})
+                self._answer_callback(callback_query["id"], text=f"Page {page+1}")
+            elif action == "filter" and arg in {"all", "bg", "composite"}:
+                # Update filter and refresh list on page 0
+                self.load_filters[chat_id] = arg
+                try:
+                    names = self.text_flow._list_saved_names()  # pylint: disable=protected-access
+                except Exception:
+                    logger.exception("Failed to list saved images.")
+                    names = []
+                if arg == "bg":
+                    names = [n for n in names if n.startswith("bg_") or n.startswith("txtbg_")]
+                elif arg == "composite":
+                    names = [n for n in names if n.startswith("composite_")]
+                page_size = 6
+                start = 0
+                end = min(len(names), page_size)
+                kb = []
+                # Filter row
+                def filt_btn3(key, label):
+                    sel = self.load_filters.get(chat_id, "all") == key
+                    txt = f"{label} {'✅' if sel else ''}".strip()
+                    return {"text": txt, "callback_data": f"load|filter|{key}"}
+                kb.append([filt_btn3("all", "All"), filt_btn3("bg", "Backgrounds"), filt_btn3("composite", "Composites")])
+                # Items
+                row = []
+                for name in names[start:end]:
+                    base = self.text_flow._strip_prefix(name)  # pylint: disable=protected-access
+                    label = base if len(base) <= 18 else (base[:15] + "…")
+                    row.append({"text": label, "callback_data": f"load|pick|{name}"})
+                    if len(row) == 3:
+                        kb.append(row)
+                        row = []
+                if row:
+                    kb.append(row)
+                # Next link if more pages
+                total_pages = max(1, (len(names) + page_size - 1) // page_size)
+                if total_pages > 1:
+                    kb.append([{ "text": "Next ▶️", "callback_data": "load|page|1" }])
+                last_bg = os.path.join(self.text_flow.storage_dir, "last_text_background.png")
+                if os.path.exists(last_bg):
+                    kb.append([{ "text": "🖼 Display Last Background (/txt)", "callback_data": "load|display_last" }])
+                kb.append([{ "text": "✖️ Cancel", "callback_data": "load|cancel" }])
+                self._refresh_load_message(chat_id, message_id, "Load Saved Image\n\nPick an image to preview, display, or use as background.", {"inline_keyboard": kb})
+                self._answer_callback(callback_query["id"], text=f"Filter: {arg}")
+            elif action == "display" and arg:
+                name = arg
+                path = os.path.join(self.text_flow.storage_dir, "saved", f"{name}.png")
+                try:
+                    with Image.open(path) as img:
+                        self.display_manager.display_image(img)
+                    self._refresh_load_message(chat_id, message_id, f"Loaded '{name}' to display.", {"inline_keyboard": []})
+                    self._answer_callback(callback_query["id"], text="Displayed.")
+                except Exception as exc:
+                    logger.exception("Load display failed: %s", exc)
+                    self._answer_callback(callback_query["id"], text="Load failed.")
+            elif action == "display_last":
+                path = os.path.join(self.text_flow.storage_dir, "last_text_background.png")
+                if not os.path.exists(path):
+                    self._answer_callback(callback_query["id"], text="No last /txt background.")
+                    return
+                try:
+                    with Image.open(path) as img:
+                        self.display_manager.display_image(img)
+                    self._refresh_load_message(chat_id, message_id, "Displayed last /txt background.", {"inline_keyboard": []})
+                    self._answer_callback(callback_query["id"], text="Displayed.")
+                except Exception as exc:
+                    logger.exception("Display last background failed: %s", exc)
+                    self._answer_callback(callback_query["id"], text="Load failed.")
+            elif action == "usetxt" and arg:
+                name = arg
+                self.pending_txt_bg[chat_id] = name
+                try:
+                    self._api_post(
+                        "sendMessage",
+                        data={
+                            "chat_id": chat_id,
+                            "text": f"Enter the message text to render over '{name}':",
+                            "reply_markup": json.dumps({"force_reply": True, "input_field_placeholder": "Type your message"}),
+                        },
+                    )
+                except Exception:
+                    logger.exception("Failed to prompt for /txt message after load.")
+                self._answer_callback(callback_query["id"], text="Awaiting message…")
+            elif action == "back":
+                self._refresh_load_message(chat_id, message_id, "Load Saved Image\n\nPick an image to preview, display, or use as background.", {
+                    "inline_keyboard": [[{"text": "✖️ Cancel", "callback_data": "load|cancel"}]]
+                })
+                # Reopen the initial menu with first page
+                self._send_load_menu(chat_id)
+            elif action == "cancel":
+                self._refresh_load_message(chat_id, message_id, "Load cancelled.", {"inline_keyboard": []})
                 self._answer_callback(callback_query["id"], text="Cancelled.")
             else:
                 self._answer_callback(callback_query["id"]) 
@@ -1124,8 +1342,13 @@ class TelegramBotListener:
             "",
             "Saving:",
             "- /save — interactive menu for saving images.",
-            "  Options: Save Background, Save Composite, Save Last Background (/txt).",
+            "  Options: Save Background (Auto), Save Last Background and Text.",
             "  Saved files are under telegram/saved and appear in the picker.",
+            "",
+            "Loading:",
+            "- /load — interactive picker to load saved images.",
+            "  Select a saved item, then 👁 Preview, 🖼 Display Now, or 📝 Use as Background.",
+            "- /load <name> — display a saved image by name immediately.",
         ]
         self._send_message(chat_id, "\n".join(lines))
 
@@ -1137,11 +1360,8 @@ class TelegramBotListener:
         markup = {
             "inline_keyboard": [
                 [
-                    {"text": "Save Background", "callback_data": "save|choose|bg"},
-                    {"text": "Save Composite", "callback_data": "save|choose|text"},
-                ],
-                [
-                    {"text": "Save Last Background (/txt)", "callback_data": "save|choose|txtbg"},
+                    {"text": "Save Background (Auto)", "callback_data": "save|choose|bgauto"},
+                    {"text": "Save Last Background and Text", "callback_data": "save|choose|text"},
                 ],
                 [
                     {"text": "✖️ Cancel", "callback_data": "save|cancel"},
@@ -1150,9 +1370,91 @@ class TelegramBotListener:
         }
         self._api_post("sendMessage", data={"chat_id": chat_id, "text": text, "reply_markup": json.dumps(markup)})
 
+    def _send_load_menu(self, chat_id):
+        text = (
+            "Load Saved Image\n\n"
+            "Pick an image to preview, display, or use as background."
+        )
+        try:
+            names = self.text_flow._list_saved_names()  # pylint: disable=protected-access
+        except Exception:
+            logger.exception("Failed to list saved images.")
+            names = []
+
+        # Apply current filter
+        filt = self.load_filters.get(chat_id, "all")
+        if filt == "bg":
+            names = [n for n in names if n.startswith("bg_") or n.startswith("txtbg_")]
+        elif filt == "composite":
+            names = [n for n in names if n.startswith("composite_")]
+
+        page_size = 6
+        total_pages = max(1, (len(names) + page_size - 1) // page_size)
+        start = 0
+        end = min(len(names), page_size)
+
+        kb = []
+        # Filter row
+        def filt_btn(key, label):
+            sel = self.load_filters.get(chat_id, "all") == key
+            txt = f"{label} {'✅' if sel else ''}".strip()
+            return {"text": txt, "callback_data": f"load|filter|{key}"}
+        kb.append([filt_btn("all", "All"), filt_btn("bg", "Backgrounds"), filt_btn("composite", "Composites")])
+
+        # Saved items (3 per row)
+        row = []
+        for name in names[start:end]:
+            base = self.text_flow._strip_prefix(name)  # pylint: disable=protected-access
+            label = base if len(base) <= 18 else (base[:15] + "…")
+            row.append({"text": label, "callback_data": f"load|pick|{name}"})
+            if len(row) == 3:
+                kb.append(row)
+                row = []
+        if row:
+            kb.append(row)
+
+        # Nav row (Next only from first page)
+        if total_pages > 1:
+            kb.append([{ "text": "Next ▶️", "callback_data": "load|page|1" }])
+
+        # Quick action: display last /txt background if available
+        last_bg = os.path.join(self.text_flow.storage_dir, "last_text_background.png")
+        if os.path.exists(last_bg):
+            kb.append([{ "text": "🖼 Display Last Background (/txt)", "callback_data": "load|display_last" }])
+
+        kb.append([{ "text": "✖️ Cancel", "callback_data": "load|cancel" }])
+
+        self._api_post(
+            "sendMessage",
+            data={
+                "chat_id": chat_id,
+                "text": text,
+                "reply_markup": json.dumps({"inline_keyboard": kb}),
+            },
+        )
+
+    def _refresh_load_message(self, chat_id, message_id, text, markup):
+        try:
+            self._api_post(
+                "editMessageText",
+                data={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "text": text,
+                    "reply_markup": json.dumps(markup) if markup else json.dumps({"inline_keyboard": []}),
+                },
+            )
+        except Exception:
+            logger.exception("Failed to update /load message.")
+
     def _suggest_save_name(self, source):
         ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        prefix = "text" if source == "text" else "bg"
+        if source == "text":
+            prefix = "composite"
+        elif source == "txtbg":
+            prefix = "txtbg"
+        else:
+            prefix = "bg"
         return f"{prefix}_{ts}"
 
     def _refresh_save_message(self, chat_id, message_id, text, markup):

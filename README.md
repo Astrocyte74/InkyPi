@@ -92,6 +92,24 @@ Note:
 
 For more details, including instructions on how to image your microSD with Raspberry Pi OS, refer to [installation.md](./docs/installation.md). You can also check out [this YouTube tutorial](https://youtu.be/L5PvQj1vfC4).
 
+
+## Telegram Bot (Remote Control)
+
+InkyPi includes a Telegram bot so you can update the display remotely, generate AI backgrounds, compose short notes, and manage saved images.
+
+Quick commands:
+
+- `/ai <prompt>` — open AI image generator (choose Model/Quality/Style/Palette; then Generate)
+- `/txt <message>` — compose a text note with background options:
+  - None, Use Last Image, Auto-Generate Image, Solid Colour, Saved Image, or Custom Image (Prompt)
+- `/save` — interactive menu to save either:
+  - Save Background (Auto) — last `/txt` background if available, else latest background
+  - Save Last Background and Text — full composite `/txt` image
+- `/load` — interactive picker to preview, display, or use a saved background
+- `/status` — send the latest background image
+
+Setup: add `TELEGRAM_BOT_TOKEN` (and optionally `TELEGRAM_ALLOWED_IDS`) to `.env`, then restart. See `docs/api_keys.md` for details.
+
 ## Update
 To update your InkyPi with the latest code changes, follow these steps:
 1. Navigate to the project directory:

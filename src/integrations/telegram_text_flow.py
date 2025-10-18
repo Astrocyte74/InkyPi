@@ -150,7 +150,9 @@ class TelegramTextFlow:
         if request.get("bg_selected") and request.get("background") == "saved":
             saved_name = (request.get("saved_name") or "").strip()
             if saved_name:
-                lines.append(f"Selected: {saved_name} ✅")
+                # Show without internal prefix
+                base = self._strip_prefix(saved_name)
+                lines.append(f"Selected: {base} ✅")
             else:
                 lines.append("Saved image: (none)")
         if status:
@@ -250,6 +252,8 @@ class TelegramTextFlow:
         elif request.get("bg_selected") and request.get("background") == "saved":
             # Saved image picker with pagination
             names = self._list_saved_names()
+            # Only show background-type saves to avoid text-on-text
+            names = [n for n in names if n.startswith("bg_") or n.startswith("txtbg_")]
             page = int(request.get("saved_page") or 0)
             page_size = 6
             total_pages = max(1, (len(names) + page_size - 1) // page_size)
@@ -261,7 +265,7 @@ class TelegramTextFlow:
             for chunk_start in range(start, min(end, len(names)), 3):
                 row = []
                 for name in names[chunk_start: min(chunk_start + 3, len(names))]:
-                    label = name
+                    label = self._strip_prefix(name)
                     if len(label) > 18:
                         label = label[:15] + "…"
                     if request.get("saved_name") == name:
@@ -608,6 +612,12 @@ class TelegramTextFlow:
             raise ValueError("Invalid name.")
         return cleaned.lower()
 
+    def _strip_prefix(self, name):
+        for prefix in ("composite_", "txtbg_", "bg_"):
+            if name.startswith(prefix):
+                return name[len(prefix):]
+        return name
+
     def delete_saved(self, name):
         saved_dir = os.path.join(self.storage_dir, "saved")
         path = os.path.join(saved_dir, f"{name}.png")
@@ -621,14 +631,22 @@ class TelegramTextFlow:
         old_path = os.path.join(saved_dir, f"{old}.png")
         if not os.path.exists(old_path):
             raise FileNotFoundError("Original saved image not found.")
-        safe = self._sanitize_name(new)
+        # Preserve the original prefix; user-entered name updates only the base
+        prefix = ""
+        for p in ("composite_", "txtbg_", "bg_"):
+            if old.startswith(p):
+                prefix = p
+                break
+        base = self._sanitize_name(self._strip_prefix(new))
+        safe = f"{prefix}{base}" if prefix else base
         new_path = os.path.join(saved_dir, f"{safe}.png")
         if os.path.exists(new_path):
-            # Deduplicate with numeric suffix
+            # Deduplicate with numeric suffix on base, keep prefix
             i = 1
-            base = safe
+            base0 = base
             while os.path.exists(new_path):
-                safe = f"{base}-{i}"
+                base = f"{base0}-{i}"
+                safe = f"{prefix}{base}" if prefix else base
                 new_path = os.path.join(saved_dir, f"{safe}.png")
                 i += 1
         os.rename(old_path, new_path)
