@@ -322,7 +322,12 @@ class TelegramBotListener:
         safe = self._sanitize_name(name)
         saved_dir = os.path.join(self.storage_dir, "saved")
         os.makedirs(saved_dir, exist_ok=True)
-        latest = os.path.join(self.storage_dir, "latest_text.png") if source == "text" else os.path.join(self.storage_dir, "latest.png")
+        if source == "text":
+            latest = os.path.join(self.storage_dir, "latest_text.png")
+        elif source == "txtbg":
+            latest = os.path.join(self.storage_dir, "last_text_background.png")
+        else:
+            latest = os.path.join(self.storage_dir, "latest.png")
         if not os.path.exists(latest):
             raise FileNotFoundError("No recent image to save.")
         target = os.path.join(saved_dir, f"{safe}.png")
@@ -633,10 +638,10 @@ class TelegramBotListener:
             message_id = callback_query.get("message", {}).get("message_id")
             action = parts[1] if len(parts) > 1 else None
             arg = parts[2] if len(parts) > 2 else None
-            if action == "choose" and arg in {"bg", "text"}:
+            if action == "choose" and arg in {"bg", "text", "txtbg"}:
                 suggestion = self._suggest_save_name(arg)
                 text = (
-                    f"Save {'Background' if arg=='bg' else 'Text'}\n\n"
+                    f"Save {'Background' if arg=='bg' else ('Composite' if arg=='text' else 'Last Background (/txt)')}\n\n"
                     f"Suggested name: {suggestion}"
                 )
                 markup = {
@@ -653,7 +658,7 @@ class TelegramBotListener:
                 }
                 self._refresh_save_message(chat_id, message_id, text, markup)
                 self._answer_callback(callback_query["id"]) 
-            elif action == "quick" and arg in {"bg", "text"}:
+            elif action == "quick" and arg in {"bg", "text", "txtbg"}:
                 # parts[3] suggestion
                 name = parts[3] if len(parts) > 3 else self._suggest_save_name(arg)
                 try:
@@ -664,7 +669,7 @@ class TelegramBotListener:
                 except Exception as exc:
                     logger.exception("Quick save failed: %s", exc)
                     self._answer_callback(callback_query["id"], text="Save failed.")
-            elif action == "prompt" and arg in {"bg", "text"}:
+            elif action == "prompt" and arg in {"bg", "text", "txtbg"}:
                 # Ask name via ForceReply
                 try:
                     self.pending_save[chat_id] = {"source": arg}
@@ -1118,8 +1123,8 @@ class TelegramBotListener:
             "    • Custom Image (Prompt) — enter prompt, configure, then Generate (via /ai).",
             "",
             "Saving:",
-            "- /save <name> — save latest background image.",
-            "- /save text <name> — save latest /txt image.",
+            "- /save — interactive menu for saving images.",
+            "  Options: Save Background, Save Composite, Save Last Background (/txt).",
             "  Saved files are under telegram/saved and appear in the picker.",
         ]
         self._send_message(chat_id, "\n".join(lines))
@@ -1133,7 +1138,10 @@ class TelegramBotListener:
             "inline_keyboard": [
                 [
                     {"text": "Save Background", "callback_data": "save|choose|bg"},
-                    {"text": "Save Text", "callback_data": "save|choose|text"},
+                    {"text": "Save Composite", "callback_data": "save|choose|text"},
+                ],
+                [
+                    {"text": "Save Last Background (/txt)", "callback_data": "save|choose|txtbg"},
                 ],
                 [
                     {"text": "✖️ Cancel", "callback_data": "save|cancel"},

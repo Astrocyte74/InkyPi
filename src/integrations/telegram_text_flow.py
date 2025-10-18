@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Dict
 
 from openai import OpenAI
+from PIL import Image
 
 from model import RefreshInfo
 from plugins.ai_image.ai_image import AIImage
@@ -531,6 +532,12 @@ class TelegramTextFlow:
         if background_mode in {"ai_image", "custom_ai", "latest", "saved"}:
             placement = "bottom"
 
+        # Persist last background used for /txt to allow saving later
+        try:
+            self._persist_last_text_background(background_path, background_color)
+        except Exception:
+            logger.exception("Failed to persist last text background.")
+
         image = self._render_text_image(final_text, request.get("style"), background_path, background_color, placement)
         saved_path = self._save_image(image)
         self._display_image(image, final_text)
@@ -554,6 +561,20 @@ class TelegramTextFlow:
                 logger.exception("Failed to rewrite Telegram text for preview: %s", exc)
                 # Fallback to original text
         return text
+
+    def _persist_last_text_background(self, background_path, background_color):
+        dest = os.path.join(self.storage_dir, "last_text_background.png")
+        if background_color:
+            # Create a solid colour background matching device resolution
+            width, height = self.device_config.get_resolution()
+            if self.device_config.get_config("orientation") == "vertical":
+                width, height = height, width
+            img = Image.new("RGB", (width, height), background_color)
+            img.save(dest)
+        elif background_path and os.path.exists(background_path):
+            # Copy by reopening and re-saving to ensure a valid PNG at dest
+            with Image.open(background_path) as img:
+                img.convert("RGB").save(dest)
 
     # --- Saved image helpers -----------------------------------------------
 
