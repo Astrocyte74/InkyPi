@@ -5,6 +5,7 @@ import time
 import logging
 from datetime import datetime
 from io import BytesIO
+import shutil
 
 import requests
 from requests.exceptions import HTTPError
@@ -96,6 +97,7 @@ class TelegramBotListener:
 
         self.pending_requests = {}
         self.text_flow = TelegramTextFlow(self.device_config, self.display_manager, self.refresh_task, self.storage_dir)
+        self.pending_save = {}
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -168,6 +170,19 @@ class TelegramBotListener:
     def _handle_text(self, text, chat_id, message_id):
         text = text.strip()
 
+        # Handle pending /save name entry first (takes precedence over flow prompts)
+        if self.pending_save.get(chat_id):
+            save_ctx = self.pending_save.pop(chat_id)
+            name = text
+            src = save_ctx.get("source", "bg")
+            try:
+                saved_path = self._save_named_image(name, src)
+                self._send_message(chat_id, f"Saved {src} image as '{os.path.basename(saved_path)}'.")
+            except Exception as exc:
+                logger.exception("Failed to save named image: %s", exc)
+                self._send_message(chat_id, f"Save failed: {exc}")
+            return
+
         pending_request = self.text_flow.consume_prompt(chat_id, text)
         if pending_request:
             # If the current background mode is custom, switch into AI image flow now
@@ -185,6 +200,48 @@ class TelegramBotListener:
             )
         elif text.lower() == "/status":
             self._send_status(chat_id)
+        elif text.lower().startswith("/save"):
+            # Usage: /save [bg|text] <name>
+            parts = text.split(maxsplit=2)
+            source = "bg"
+            name = None
+            if len(parts) == 2:
+                # Could be a name or a source keyword
+                if parts[1].lower() in {"bg", "background", "image"}:
+                    source = "bg"
+                elif parts[1].lower() in {"text", "overlay"}:
+                    source = "text"
+                else:
+                    name = parts[1]
+            elif len(parts) >= 3:
+                if parts[1].lower() in {"bg", "background", "image"}:
+                    source = "bg"
+                elif parts[1].lower() in {"text", "overlay"}:
+                    source = "text"
+                name = parts[2]
+
+            if name:
+                try:
+                    saved_path = self._save_named_image(name, source)
+                    self._send_message(chat_id, f"Saved {source} image as '{os.path.basename(saved_path)}'.")
+                except Exception as exc:
+                    logger.exception("Failed to save named image: %s", exc)
+                    self._send_message(chat_id, f"Save failed: {exc}")
+            else:
+                # Ask for a name via ForceReply; remember source
+                self.pending_save[chat_id] = {"source": source}
+                try:
+                    self._api_post(
+                        "sendMessage",
+                        data={
+                            "chat_id": chat_id,
+                            "text": f"Enter a name to save the {source} image (letters, numbers, dashes).",
+                            "reply_markup": json.dumps({"force_reply": True, "input_field_placeholder": "e.g. sunrise-01"}),
+                        },
+                    )
+                except Exception:
+                    logger.exception("Failed to send ForceReply for /save name.")
+            return
         elif text.startswith("/ai"):
             prompt = text[3:].strip()
             if not prompt:
@@ -265,6 +322,32 @@ class TelegramBotListener:
             "sendMessage",
             data={"chat_id": chat_id, "text": text},
         )
+
+    def _sanitize_name(self, name):
+        cleaned = "".join(c if c.isalnum() or c in {"-", "_"} else "-" for c in name.strip())
+        while "--" in cleaned:
+            cleaned = cleaned.replace("--", "-")
+        cleaned = cleaned.strip("-")
+        if not cleaned:
+            raise ValueError("Invalid name.")
+        return cleaned.lower()
+
+    def _save_named_image(self, name, source="bg"):
+        safe = self._sanitize_name(name)
+        saved_dir = os.path.join(self.storage_dir, "saved")
+        os.makedirs(saved_dir, exist_ok=True)
+        latest = os.path.join(self.storage_dir, "latest_text.png") if source == "text" else os.path.join(self.storage_dir, "latest.png")
+        if not os.path.exists(latest):
+            raise FileNotFoundError("No recent image to save.")
+        target = os.path.join(saved_dir, f"{safe}.png")
+        final_target = target
+        suffix = 1
+        while os.path.exists(final_target):
+            final_target = os.path.join(saved_dir, f"{safe}-{suffix}.png")
+            suffix += 1
+        shutil.copyfile(latest, final_target)
+        logger.info("Saved %s image to %s", source, final_target)
+        return final_target
 
     def _api_post(self, method, data=None, files=None):
         url = f"{self.api_url}/{method}"
