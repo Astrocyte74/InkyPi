@@ -174,14 +174,14 @@ class TelegramTextFlow:
         bg_rows = [
             [
                 bg_btn("none", "None"),
-                bg_btn("ai_image", "Auto AI"),
+                bg_btn("ai_image", "Auto-Generate Image"),
             ],
             [
                 bg_btn("latest", "Use Last Image"),
             ],
             [
                 bg_btn("color", "Solid Colour"),
-                bg_btn("custom_ai", "Custom AI"),
+                bg_btn("custom_ai", "Custom Image (Prompt)"),
             ],
         ]
 
@@ -226,13 +226,13 @@ class TelegramTextFlow:
                 keyboard.append(row)
             if request.get("bg_color_choice"):
                 keyboard.append([
-                    {"text": "Render", "callback_data": f"txt|{request_id}|confirm"},
+                    {"text": "🪄 Generate", "callback_data": f"txt|{request_id}|confirm"},
                     {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
                 ])
         else:
             if request.get("bg_selected"):
                 keyboard.append([
-                    {"text": "Render", "callback_data": f"txt|{request_id}|confirm"},
+                    {"text": "🪄 Generate", "callback_data": f"txt|{request_id}|confirm"},
                     {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
                 ])
 
