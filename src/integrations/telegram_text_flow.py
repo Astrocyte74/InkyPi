@@ -185,9 +185,11 @@ class TelegramTextFlow:
             ],
         ]
 
-        # Place rows: style, rewrite, then a label above background rows
+        # Labels above each section for clarity
         keyboard = [
+            [{"text": "Choose style:", "callback_data": f"txt|{request_id}|noop"}],
             style_row,
+            [{"text": "Rewrite:", "callback_data": f"txt|{request_id}|noop"}],
             rewrite_row,
             [{"text": "Pick background:", "callback_data": f"txt|{request_id}|noop"}],
         ]
