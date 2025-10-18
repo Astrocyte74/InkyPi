@@ -194,10 +194,7 @@ class TelegramBotListener:
             return
 
         if text.lower() in {"/start", "/help"}:
-            self._send_message(
-                chat_id,
-                "Send a photo to update the InkyPi display, or use /status to fetch the latest rendered image.",
-            )
+            self._send_help(chat_id)
         elif text.lower() == "/status":
             self._send_status(chat_id)
         elif text.lower().startswith("/save"):
@@ -592,6 +589,10 @@ class TelegramBotListener:
                 except Exception as exc:
                     logger.exception("Failed to send saved image preview: %s", exc)
                     self._answer_callback(callback_query["id"], text="Preview failed.")
+            elif action == "saved_clear":
+                request["saved_name"] = None
+                self._refresh_text_message(request, status="Cleared.")
+                self._answer_callback(callback_query["id"], text="Cleared.")
             elif action == "bg_color" and param:
                 self.text_flow.set_bg_color(request, param)
                 self._refresh_text_message(request)
@@ -1033,6 +1034,36 @@ class TelegramBotListener:
         if caption:
             data["caption"] = caption
         self._api_post("sendPhoto", data=data, files=files)
+
+    def _send_help(self, chat_id):
+        lines = [
+            "InkyPi Telegram Controls",
+            "",
+            "Photos:",
+            "- Send a photo to update the display immediately.",
+            "- /status — send the latest background image.",
+            "",
+            "AI Image:",
+            "- /ai <prompt> — open image generator.",
+            "  Configure Model, Quality, Style, Palette; then Generate.",
+            "",
+            "Text Composer:",
+            "- /txt <message> — open text composer.",
+            "  Choose style (Simple/Caption/Sticky) and Rewrite (On/Off).",
+            "  Pick background:",
+            "    • None — plain (centered).",
+            "    • Use Last Image — use last Telegram background (text at bottom).",
+            "    • Auto-Generate Image — AI background (text at bottom).",
+            "    • Solid Colour — pick a colour, then 🪄 Generate.",
+            "    • Saved Image — pick from saved list, 👁 Preview, 🧹 Clear, 🗑 Delete, ✏️ Rename.",
+            "    • Custom Image (Prompt) — enter prompt, configure, then Generate (via /ai).",
+            "",
+            "Saving:",
+            "- /save <name> — save latest background image.",
+            "- /save text <name> — save latest /txt image.",
+            "  Saved files are under telegram/saved and appear in the picker.",
+        ]
+        self._send_message(chat_id, "\n".join(lines))
 
     def _answer_callback(self, callback_id, text=None, alert=False):
         data = {"callback_query_id": callback_id}

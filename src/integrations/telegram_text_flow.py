@@ -280,6 +280,7 @@ class TelegramTextFlow:
             manage = [
                 {"text": "🗑 Delete", "callback_data": f"txt|{request_id}|saved_delete"},
                 {"text": "✏️ Rename", "callback_data": f"txt|{request_id}|saved_rename"},
+                {"text": "🧹 Clear", "callback_data": f"txt|{request_id}|saved_clear"},
             ]
             keyboard.append(manage)
             # Quick preview + Cancel/Generate
