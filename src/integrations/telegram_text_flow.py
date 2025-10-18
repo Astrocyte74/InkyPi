@@ -178,9 +178,13 @@ class TelegramTextFlow:
             bg_btn("custom_ai", "Custom AI"),
         ]
 
-        # Add guidance label above background row
-        keyboard = [[{"text": "Pick background:", "callback_data": f"txt|{request_id}|noop"}]]
-        keyboard += [style_row, rewrite_row, bg_row]
+        # Place rows: style, rewrite, then a label above background row
+        keyboard = [
+            style_row,
+            rewrite_row,
+            [{"text": "Pick background:", "callback_data": f"txt|{request_id}|noop"}],
+            bg_row,
+        ]
 
         # Contextual actions
         if request.get("bg_selected") and request.get("background") == "custom_ai":
