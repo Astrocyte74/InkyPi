@@ -188,6 +188,7 @@ class TelegramTextFlow:
             ],
             [
                 bg_btn("latest", "Use Last Image"),
+                bg_btn("saved", "Saved Image"),
             ],
             [
                 bg_btn("color", "Solid Colour"),
@@ -282,6 +283,11 @@ class TelegramTextFlow:
         else:
             if not request.get("image_prompt"):
                 request["image_prompt"] = request["text"].strip()
+        if request["background"] != "color":
+            request["bg_color_choice"] = None
+        if request["background"] != "saved":
+            request["saved_name"] = None
+            request["awaiting_saved"] = False
 
     # New direct setters (non-cycling)
     def set_style(self, request, style):
@@ -307,9 +313,19 @@ class TelegramTextFlow:
                     request["image_prompt"] = request["text"].strip()
             if background != "color":
                 request["bg_color_choice"] = None
+            if background != "saved":
+                request["saved_name"] = None
+                request["awaiting_saved"] = False
 
     def set_bg_color(self, request, hex_code):
         request["bg_color_choice"] = hex_code
+
+    def await_saved(self, request):
+        request["awaiting_saved"] = True
+
+    def set_saved_name(self, request, name):
+        request["saved_name"] = (name or "").strip()
+        request["awaiting_saved"] = False
 
     def await_custom_prompt(self, request):
         request["awaiting_prompt"] = True
