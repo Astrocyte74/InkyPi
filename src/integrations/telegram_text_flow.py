@@ -108,8 +108,11 @@ class TelegramTextFlow:
 
     def format_summary(self, request, status=None):
         style_label = dict(self.STYLE_OPTIONS).get(request.get("style"), request.get("style"))
-        background_label = dict(self.BACKGROUND_OPTIONS).get(request.get("background"), request.get("background"))
-        if request.get("background") == "custom_ai":
+        if not request.get("bg_selected"):
+            background_label = "Select one"
+        else:
+            background_label = dict(self.BACKGROUND_OPTIONS).get(request.get("background"), request.get("background"))
+        if request.get("bg_selected") and request.get("background") == "custom_ai":
             if request.get("awaiting_background"):
                 background_label = "Custom AI (configure)"
             elif request.get("custom_background"):
@@ -126,7 +129,7 @@ class TelegramTextFlow:
             f"Rewrite: {rewrite_label}",
             f"Background: {background_label}",
         ]
-        if request.get("background") == "custom_ai":
+        if request.get("bg_selected") and request.get("background") == "custom_ai":
             prompt_preview = request.get("image_prompt", "").strip()
             if not prompt_preview:
                 prompt_preview = "(empty)"
@@ -161,7 +164,7 @@ class TelegramTextFlow:
 
         # Background selection buttons (no cycling)
         def bg_btn(value, label):
-            active = request.get("background") == value
+            active = bool(request.get("bg_selected")) and request.get("background") == value
             text = f"{label} {'✅' if active else ''}".strip()
             return {"text": text, "callback_data": f"txt|{request_id}|background|{value}"}
 
@@ -208,6 +211,7 @@ class TelegramTextFlow:
         keys = [value for value, _ in self.BACKGROUND_OPTIONS]
         current_index = keys.index(request["background"])
         request["background"] = keys[(current_index + 1) % len(keys)]
+        request["bg_selected"] = True
         if request["background"] != "custom_ai":
             request["awaiting_background"] = False
             request["custom_background"] = None

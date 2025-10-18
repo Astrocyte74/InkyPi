@@ -449,6 +449,10 @@ class TelegramBotListener:
                 # Do not edit original message; avoid visual shrink
                 self._answer_callback(callback_query["id"], text="Send background prompt…")
             elif action == "confirm":
+                if not request.get("bg_selected"):
+                    self._refresh_text_message(request, status="Choose a background first.")
+                    self._answer_callback(callback_query["id"], text="Select a background option.")
+                    return
                 if request.get("background") == "custom_ai" and request.get("awaiting_prompt"):
                     self._refresh_text_message(request, status="Enter a background prompt before continuing.")
                     self._answer_callback(callback_query["id"], text="Send a background prompt first.")
