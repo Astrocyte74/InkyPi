@@ -688,8 +688,8 @@ class TelegramBotListener:
                 self._refresh_save_message(chat_id, message_id, "Save Image\n\nPick which image to save and optionally choose a name.", {
                     "inline_keyboard": [
                         [
-                            {"text": "Save Background", "callback_data": "save|choose|bg"},
-                            {"text": "Save Text", "callback_data": "save|choose|text"},
+                            {"text": "Save Background (Auto)", "callback_data": "save|choose|bgauto"},
+                            {"text": "Save Last Background and Text", "callback_data": "save|choose|text"},
                         ],
                         [
                             {"text": "✖️ Cancel", "callback_data": "save|cancel"},
