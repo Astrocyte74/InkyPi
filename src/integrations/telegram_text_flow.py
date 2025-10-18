@@ -5,12 +5,13 @@ from datetime import datetime
 from typing import Dict
 
 from openai import OpenAI
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from model import RefreshInfo
 from plugins.ai_image.ai_image import AIImage
 from plugins.plugin_registry import get_plugin_instance
 from utils.image_utils import compute_image_hash
+from utils.app_utils import resolve_path
 
 logger = logging.getLogger(__name__)
 
@@ -562,6 +563,12 @@ class TelegramTextFlow:
             logger.exception("Failed to persist last text background.")
 
         image = self._render_text_image(final_text, request.get("style"), background_path, background_color, placement)
+        # Optional weather badge overlay
+        if request.get("wbadge"):
+            try:
+                image = self._overlay_weather_badge(image)
+            except Exception:
+                logger.exception("Failed to overlay weather badge.")
         saved_path = self._save_image(image)
         self._display_image(image, final_text)
 
@@ -598,6 +605,104 @@ class TelegramTextFlow:
             # Copy by reopening and re-saving to ensure a valid PNG at dest
             with Image.open(background_path) as img:
                 img.convert("RGB").save(dest)
+
+    # --- Weather badge overlay ---------------------------------------------
+
+    def _overlay_weather_badge(self, image: Image.Image) -> Image.Image:
+        data = self._fetch_weather_badge_data()
+        if not data:
+            return image
+        icon_path = data.get("icon_path")
+        temp_text = data.get("temp_text", "")
+        if not temp_text:
+            return image
+
+        img = image.convert("RGBA")
+        draw = ImageDraw.Draw(img)
+        W, H = img.size
+        # Badge sizing
+        font_path = resolve_path("static/fonts/Jost-SemiBold.ttf")
+        font_size = max(18, int(min(W, H) * 0.05))
+        try:
+            font = ImageFont.truetype(font_path, font_size)
+        except Exception:
+            font = ImageFont.load_default()
+
+        padding = int(font_size * 0.5)
+        icon_size = int(font_size * 1.4)
+        # Measure text bbox
+        bbox = draw.textbbox((0, 0), temp_text, font=font)
+        tw = max(0, bbox[2] - bbox[0])
+        th = max(0, bbox[3] - bbox[1])
+        bw = padding * 3 + icon_size + tw
+        bh = padding * 2 + max(icon_size, th)
+
+        # Position: top-right
+        x1 = max(0, W - padding - bw)
+        y1 = padding
+        x2 = x1 + bw
+        y2 = y1 + bh
+        # Background rounded rectangle (semi-opaque)
+        radius = int(font_size * 0.5)
+        try:
+            draw.rounded_rectangle((x1, y1, x2, y2), radius=radius, fill=(0, 0, 0, 200))
+        except Exception:
+            draw.rectangle((x1, y1, x2, y2), fill=(0, 0, 0, 200))
+
+        # Icon
+        if icon_path and os.path.exists(icon_path):
+            try:
+                with Image.open(icon_path) as ic:
+                    ic = ic.convert("RGBA").resize((icon_size, icon_size))
+                    img.paste(ic, (x1 + padding, y1 + (bh - icon_size) // 2), ic)
+            except Exception:
+                logger.exception("Failed to draw weather icon")
+        # Text (white)
+        tx = x1 + padding * 2 + icon_size
+        ty = y1 + (bh - th) // 2
+        draw.text((tx, ty), temp_text, font=font, fill=(255, 255, 255, 255))
+
+        return img.convert("RGB")
+
+    def _fetch_weather_badge_data(self):
+        plugin = self._get_weather_plugin()
+        if not plugin:
+            return None
+        plugin_config = self.device_config.get_plugin("weather")
+        if not plugin_config:
+            return None
+        settings = plugin_config.get("plugin_settings") or {}
+        provider = settings.get("weatherProvider", "OpenWeatherMap")
+        units = settings.get("units", "metric")
+        lat = settings.get("latitude")
+        lon = settings.get("longitude")
+        try:
+            if provider == "OpenWeatherMap":
+                api_key = self.device_config.load_env_key("OPEN_WEATHER_MAP_SECRET")
+                if not api_key:
+                    return None
+                wd = plugin.get_weather_data(api_key, units, lat, lon)
+                current = wd.get("current", {})
+                temp = current.get("temp")
+                icon_code = (current.get("weather") or [{}])[0].get("icon", "01d").replace("n", "d")
+                icon_path = plugin.get_plugin_dir(f"icons/{icon_code}.png")
+            elif provider == "OpenMeteo":
+                wd = plugin.get_open_meteo_data(lat, lon, units, 1)
+                current = wd.get("current_weather", {})
+                temp = current.get("temperature")
+                from datetime import datetime as _dt
+                from datetime import timezone as _tz
+                hour = _dt.now(_tz.utc).hour
+                icon_code = plugin.map_weather_code_to_icon(current.get("weathercode", 0), hour)
+                icon_path = plugin.get_plugin_dir(f"icons/{icon_code}.png")
+            else:
+                return None
+            unit_symbol = {"metric": "°C", "imperial": "°F", "standard": "K"}.get(units, "°C")
+            temp_text = f"{int(round(temp))}{unit_symbol}" if isinstance(temp, (int, float)) else None
+            return {"icon_path": icon_path, "temp_text": temp_text}
+        except Exception:
+            logger.exception("Failed to fetch weather data for badge")
+            return None
 
     # --- Saved image helpers -----------------------------------------------
 
