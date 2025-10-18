@@ -170,8 +170,15 @@ class TelegramBotListener:
 
         pending_request = self.text_flow.consume_prompt(chat_id, text)
         if pending_request:
-            self._refresh_text_message(pending_request, status="Background prompt updated. Confirm to continue.")
-            self._send_message(chat_id, "Background prompt updated. Tap Send when ready or /skip to use the note text.")
+            # If the current background mode is custom, switch into AI image flow now
+            if pending_request.get("background") == "custom_ai":
+                try:
+                    self._refresh_text_message(pending_request, status="Opening image options…")
+                except Exception:
+                    logger.exception("Failed to update message prior to starting background flow.")
+                self._start_custom_background_flow(pending_request)
+            else:
+                self._refresh_text_message(pending_request, status="Background prompt updated.")
             return
 
         if text.lower() in {"/start", "/help"}:
@@ -382,7 +389,13 @@ class TelegramBotListener:
                 return
 
             if action == "cycle_style":
+                # Backward compatibility: still support cycle_style if old keyboards exist
                 self.text_flow.cycle_style(request)
+                self._refresh_text_message(request)
+                label = dict(self.text_flow.STYLE_OPTIONS).get(request["style"], request["style"])
+                self._answer_callback(callback_query["id"], text=f"Style: {label}")
+            elif action == "style" and param:
+                self.text_flow.set_style(request, param)
                 self._refresh_text_message(request)
                 label = dict(self.text_flow.STYLE_OPTIONS).get(request["style"], request["style"])
                 self._answer_callback(callback_query["id"], text=f"Style: {label}")
@@ -391,9 +404,21 @@ class TelegramBotListener:
                 status = "On" if request["rewrite"] else "Off"
                 self._refresh_text_message(request)
                 self._answer_callback(callback_query["id"], text=f"Rewrite: {status}")
+            elif action == "rewrite" and param:
+                self.text_flow.set_rewrite(request, param == "on")
+                status = "On" if request["rewrite"] else "Off"
+                self._refresh_text_message(request)
+                self._answer_callback(callback_query["id"], text=f"Rewrite: {status}")
             elif action == "cycle_background":
+                # Backward compatibility
                 self.text_flow.cycle_background(request)
                 label = dict(self.text_flow.BACKGROUND_OPTIONS).get(request["background"], request["background"])
+                self._refresh_text_message(request)
+                self._answer_callback(callback_query["id"], text=f"Background: {label}")
+            elif action == "background" and param:
+                self.text_flow.set_background(request, param)
+                label = dict(self.text_flow.BACKGROUND_OPTIONS).get(request["background"], request["background"])
+                # If choosing custom, prompt will be requested via set_prompt button
                 self._refresh_text_message(request)
                 self._answer_callback(callback_query["id"], text=f"Background: {label}")
             elif action == "set_prompt":
@@ -411,30 +436,6 @@ class TelegramBotListener:
                     logger.exception("Failed to send ForceReply prompt request.")
                 self._refresh_text_message(request, status="Awaiting background prompt…")
                 self._answer_callback(callback_query["id"], text="Send background prompt…")
-            elif action == "bg_config":
-                self.text_flow.enter_bg_config(request)
-                self._refresh_text_message(request)
-                self._answer_callback(callback_query["id"], text="Configure background…")
-            elif action == "bg_back":
-                self.text_flow.exit_bg_config(request)
-                self._refresh_text_message(request)
-                self._answer_callback(callback_query["id"], text="Back to summary.")
-            elif action == "bg_model":
-                self.text_flow.cycle_bg_model(request)
-                self._refresh_text_message(request)
-                self._answer_callback(callback_query["id"], text="Model updated.")
-            elif action == "bg_quality":
-                self.text_flow.cycle_bg_quality(request)
-                self._refresh_text_message(request)
-                self._answer_callback(callback_query["id"], text="Quality updated.")
-            elif action == "bg_palette":
-                self.text_flow.cycle_bg_palette(request)
-                self._refresh_text_message(request)
-                self._answer_callback(callback_query["id"], text="Palette updated.")
-            elif action == "bg_style":
-                self.text_flow.cycle_bg_style(request)
-                self._refresh_text_message(request)
-                self._answer_callback(callback_query["id"], text="Style updated.")
             elif action == "confirm":
                 if request.get("background") == "custom_ai" and request.get("awaiting_prompt"):
                     self._refresh_text_message(request, status="Enter a background prompt before continuing.")

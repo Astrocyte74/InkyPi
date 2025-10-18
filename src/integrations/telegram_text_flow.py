@@ -82,6 +82,7 @@ class TelegramTextFlow:
             "custom_background": None,
             "image_prompt": text.strip(),
             "awaiting_prompt": False,
+            "bg_selected": False,
             # Inline custom background configuration state
             "bg_mode": "summary",  # summary | bg_config
             "bg_model": self.AI_MODELS[0][0],
@@ -138,118 +139,59 @@ class TelegramTextFlow:
 
     def build_keyboard(self, request):
         request_id = request["id"]
-        style_label = dict(self.STYLE_OPTIONS).get(request["style"], request["style"])
-        rewrite_label = "On" if request["rewrite"] else "Off"
-        background_label = dict(self.BACKGROUND_OPTIONS).get(request["background"], request["background"])
 
-        if request.get("background") == "custom_ai":
-            if request.get("awaiting_background"):
-                background_label = "Custom AI (configure)"
-            elif request.get("custom_background"):
-                background_label = "Custom AI ✅"
+        # Style choice buttons (no cycling)
+        def style_btn(value, label):
+            active = request.get("style") == value
+            text = f"{label} {'✅' if active else ''}".strip()
+            return {"text": text, "callback_data": f"txt|{request_id}|style|{value}"}
 
-        if request.get("awaiting_background"):
-            return {
-                "inline_keyboard": [
-                    [
-                        {
-                            "text": "✖️ Cancel",
-                            "callback_data": f"txt|{request_id}|cancel",
-                        }
-                    ]
-                ]
-            }
-
-        # Background config subview for custom AI
-        if request.get("background") == "custom_ai" and request.get("bg_mode") == "bg_config" and not request.get("locked"):
-            model_label = dict(self.AI_MODELS).get(request.get("bg_model"), request.get("bg_model"))
-            quality_label = (request.get("bg_quality") or "").capitalize()
-            palette_label = dict(self.PALETTES).get(request.get("bg_palette"), request.get("bg_palette"))
-            style_hint_label = dict(self.STYLE_HINTS).get(request.get("bg_style_hint"), request.get("bg_style_hint"))
-
-            keyboard = [
-                [
-                    {"text": f"⚙️ Model: {model_label}", "callback_data": f"txt|{request_id}|bg_model"},
-                    {"text": f"📐 Quality: {quality_label}", "callback_data": f"txt|{request_id}|bg_quality"},
-                ],
-                [
-                    {"text": f"🎨 Palette: {palette_label}", "callback_data": f"txt|{request_id}|bg_palette"},
-                    {"text": f"🧭 Style: {style_hint_label}", "callback_data": f"txt|{request_id}|bg_style"},
-                ],
-            ]
-
-            preview = (request.get("image_prompt", "") or "(empty)").strip()
-            if len(preview) > 20:
-                preview = preview[:17] + "…"
-            keyboard.append(
-                [
-                    {"text": f"🖋 Prompt: {preview}", "callback_data": f"txt|{request_id}|set_prompt"},
-                ]
-            )
-
-            keyboard.append(
-                [
-                    {"text": "🚀 Generate", "callback_data": f"txt|{request_id}|confirm"},
-                    {"text": "⬅️ Back", "callback_data": f"txt|{request_id}|bg_back"},
-                ]
-            )
-            return {"inline_keyboard": keyboard}
-
-        keyboard = [
-            [
-                {
-                    "text": f"🎨 Style: {style_label}",
-                    "callback_data": f"txt|{request_id}|cycle_style",
-                }
-            ],
-            [
-                {
-                    "text": f"✍️ Rewrite: {rewrite_label}",
-                    "callback_data": f"txt|{request_id}|toggle_rewrite",
-                }
-            ],
-            [
-                {
-                    "text": f"🖼 Background: {background_label}",
-                    "callback_data": f"txt|{request_id}|cycle_background",
-                }
-            ],
+        style_row = [
+            style_btn("simple", "📝 Simple"),
+            style_btn("caption", "🗒️ Caption"),
+            style_btn("sticky", "📌 Sticky"),
         ]
 
+        # Rewrite toggle buttons
+        rewrite_on = request.get("rewrite", False)
+        rewrite_row = [
+            {"text": f"Rewrite Off {'✅' if not rewrite_on else ''}".strip(), "callback_data": f"txt|{request_id}|rewrite|off"},
+            {"text": f"Rewrite On {'✅' if rewrite_on else ''}".strip(), "callback_data": f"txt|{request_id}|rewrite|on"},
+        ]
+
+        # Background selection buttons (no cycling)
+        def bg_btn(value, label):
+            active = request.get("background") == value
+            text = f"{label} {'✅' if active else ''}".strip()
+            return {"text": text, "callback_data": f"txt|{request_id}|background|{value}"}
+
+        bg_row = [
+            bg_btn("none", "None"),
+            bg_btn("ai_image", "Auto AI"),
+            bg_btn("latest", "Latest"),
+            bg_btn("custom_ai", "Custom AI"),
+        ]
+
+        keyboard = [style_row, rewrite_row, bg_row]
+
+        # Contextual actions
         if request.get("background") == "custom_ai":
-            preview = request.get("image_prompt", "").strip() or "(empty)"
-            if len(preview) > 20:
-                preview = preview[:17] + "…"
-            keyboard.append(
-                [
-                    {
-                        "text": f"🖋 Prompt: {preview}",
-                        "callback_data": f"txt|{request_id}|set_prompt",
-                    }
-                ]
-            )
+            preview = (request.get("image_prompt", "") or "(empty)").strip()
+            if len(preview) > 24:
+                preview = preview[:21] + "…"
+            keyboard.append([
+                {"text": f"🖋 Enter Prompt: {preview}", "callback_data": f"txt|{request_id}|set_prompt"},
+            ])
+            keyboard.append([
+                {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
+            ])
+        else:
+            if request.get("bg_selected"):
+                keyboard.append([
+                    {"text": "✅ Set", "callback_data": f"txt|{request_id}|confirm"},
+                    {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
+                ])
 
-            keyboard.append(
-                [
-                    {
-                        "text": "⚙️ Background Options",
-                        "callback_data": f"txt|{request_id}|bg_config",
-                    }
-                ]
-            )
-
-        keyboard.append(
-            [
-                {
-                    "text": "✅ Send",
-                    "callback_data": f"txt|{request_id}|confirm",
-                },
-                {
-                    "text": "✖️ Cancel",
-                    "callback_data": f"txt|{request_id}|cancel",
-                },
-            ]
-        )
         return {"inline_keyboard": keyboard}
 
     # --- Mutators ----------------------------------------------------------
@@ -271,9 +213,30 @@ class TelegramTextFlow:
             request["custom_background"] = None
             request["awaiting_prompt"] = False
         else:
-            request["bg_mode"] = "summary"
             if not request.get("image_prompt"):
                 request["image_prompt"] = request["text"].strip()
+
+    # New direct setters (non-cycling)
+    def set_style(self, request, style):
+        keys = [value for value, _ in self.STYLE_OPTIONS]
+        if style in keys:
+            request["style"] = style
+
+    def set_rewrite(self, request, enabled: bool):
+        request["rewrite"] = bool(enabled)
+
+    def set_background(self, request, background):
+        keys = [value for value, _ in self.BACKGROUND_OPTIONS]
+        if background in keys:
+            request["background"] = background
+            request["bg_selected"] = True
+            if background != "custom_ai":
+                request["awaiting_background"] = False
+                request["custom_background"] = None
+                request["awaiting_prompt"] = False
+            else:
+                if not request.get("image_prompt"):
+                    request["image_prompt"] = request["text"].strip()
 
     def await_custom_prompt(self, request):
         request["awaiting_prompt"] = True
@@ -362,13 +325,7 @@ class TelegramTextFlow:
         elif background_mode == "custom_ai":
             background_path = request.get("custom_background")
             if not background_path:
-                background_path = self._generate_ai_background(
-                    request.get("image_prompt") or final_text,
-                    bg_model=request.get("bg_model"),
-                    bg_quality=request.get("bg_quality"),
-                    bg_palette=request.get("bg_palette"),
-                    style_hint=request.get("bg_style_hint"),
-                )
+                raise RuntimeError("Custom background not ready yet.")
 
         image = self._render_text_image(final_text, request.get("style"), background_path)
         saved_path = self._save_image(image)
