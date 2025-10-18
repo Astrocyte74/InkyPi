@@ -433,6 +433,13 @@ class TelegramBotListener:
                 else:
                     self._refresh_text_message(request)
                 self._answer_callback(callback_query["id"], text=f"Background: {label}")
+            elif action == "bg_color" and param:
+                self.text_flow.set_bg_color(request, param)
+                self._refresh_text_message(request)
+                self._answer_callback(callback_query["id"], text="Colour selected.")
+            elif action == "noop":
+                # No operation, just dismiss the callback
+                self._answer_callback(callback_query["id"])            
             elif action == "set_prompt":
                 self.text_flow.await_custom_prompt(request)
                 try:

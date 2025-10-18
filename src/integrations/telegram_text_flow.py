@@ -29,8 +29,9 @@ class TelegramTextFlow:
 
     BACKGROUND_OPTIONS = [
         ("none", "None"),
-        ("latest", "Latest Display"),
+        ("latest", "Use Last Image"),
         ("ai_image", "Auto AI Image"),
+        ("color", "Solid Colour"),
         ("custom_ai", "Custom AI Image…"),
     ]
 
@@ -89,6 +90,7 @@ class TelegramTextFlow:
             "bg_quality": self.QUALITY_OPTIONS[self.AI_MODELS[0][0]][0],
             "bg_palette": self.PALETTES[0][0],
             "bg_style_hint": "none",
+            "bg_color_choice": None,
         }
         self.requests[request_id] = data
         return data
@@ -171,14 +173,17 @@ class TelegramTextFlow:
         bg_row = [
             bg_btn("none", "None"),
             bg_btn("ai_image", "Auto AI"),
-            bg_btn("latest", "Latest"),
+            bg_btn("latest", "Use Last Image"),
+            bg_btn("color", "Solid Colour"),
             bg_btn("custom_ai", "Custom AI"),
         ]
 
-        keyboard = [style_row, rewrite_row, bg_row]
+        # Add guidance label above background row
+        keyboard = [[{"text": "Pick background:", "callback_data": f"txt|{request_id}|noop"}]]
+        keyboard += [style_row, rewrite_row, bg_row]
 
         # Contextual actions
-        if request.get("background") == "custom_ai":
+        if request.get("bg_selected") and request.get("background") == "custom_ai":
             preview = (request.get("image_prompt", "") or "(empty)").strip()
             if len(preview) > 24:
                 preview = preview[:21] + "…"
@@ -188,10 +193,35 @@ class TelegramTextFlow:
             keyboard.append([
                 {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
             ])
+        elif request.get("bg_selected") and request.get("background") == "color":
+            # Offer a set of colour choices; show Render once a colour is chosen
+            colours = [
+                ("#141414", "Black"),
+                ("#FFFFFF", "White"),
+                ("#E60000", "Red"),
+                ("#008F11", "Green"),
+                ("#0057FF", "Blue"),
+                ("#FFD21E", "Yellow"),
+            ]
+            row = []
+            for hex_code, name in colours:
+                is_active = request.get("bg_color_choice") == hex_code
+                label = f"{name} {'✅' if is_active else ''}".strip()
+                row.append({"text": label, "callback_data": f"txt|{request_id}|bg_color|{hex_code}"})
+                if len(row) == 3:
+                    keyboard.append(row)
+                    row = []
+            if row:
+                keyboard.append(row)
+            if request.get("bg_color_choice"):
+                keyboard.append([
+                    {"text": "Render", "callback_data": f"txt|{request_id}|confirm"},
+                    {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
+                ])
         else:
             if request.get("bg_selected"):
                 keyboard.append([
-                    {"text": "✅ Set", "callback_data": f"txt|{request_id}|confirm"},
+                    {"text": "Render", "callback_data": f"txt|{request_id}|confirm"},
                     {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
                 ])
 
@@ -241,6 +271,11 @@ class TelegramTextFlow:
             else:
                 if not request.get("image_prompt"):
                     request["image_prompt"] = request["text"].strip()
+            if background != "color":
+                request["bg_color_choice"] = None
+
+    def set_bg_color(self, request, hex_code):
+        request["bg_color_choice"] = hex_code
 
     def await_custom_prompt(self, request):
         request["awaiting_prompt"] = True
@@ -317,6 +352,7 @@ class TelegramTextFlow:
                 raise RuntimeError("Failed to rewrite text via AI service.")
 
         background_path = None
+        background_color = None
         background_mode = request.get("background")
         if background_mode == "latest":
             candidate = self.device_config.current_image_file
@@ -330,8 +366,12 @@ class TelegramTextFlow:
             background_path = request.get("custom_background")
             if not background_path:
                 raise RuntimeError("Custom background not ready yet.")
+        elif background_mode == "color":
+            background_color = request.get("bg_color_choice")
+            if not background_color:
+                raise RuntimeError("Choose a colour first.")
 
-        image = self._render_text_image(final_text, request.get("style"), background_path)
+        image = self._render_text_image(final_text, request.get("style"), background_path, background_color)
         saved_path = self._save_image(image)
         self._display_image(image, final_text)
 
@@ -391,7 +431,7 @@ class TelegramTextFlow:
         logger.info("Generated AI background for Telegram text at %s", path)
         return path
 
-    def _render_text_image(self, text, style, background_path):
+    def _render_text_image(self, text, style, background_path, background_color=None):
         plugin = self._get_text_plugin()
         if not plugin:
             raise RuntimeError("Telegram Text plugin is not registered.")
@@ -401,6 +441,8 @@ class TelegramTextFlow:
             "style": style,
             "background_path": background_path,
         }
+        if background_color:
+            settings["background_color"] = background_color
         return plugin.generate_image(settings, self.device_config)
 
     def _save_image(self, image):
