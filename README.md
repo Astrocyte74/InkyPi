@@ -101,7 +101,7 @@ Quick commands:
 
 - `/ai <prompt>` — open AI image generator (choose Model/Quality/Style/Palette; then Generate)
 - `/txt <message>` — compose a text note with background options:
-  - None, Use Last Image, Auto-Generate Image, Solid Colour, Saved Image, or Custom Image (Prompt)
+  - None, Use Last Image, Live Weather, Auto-Generate Image, Solid Colour, Saved Image, or Custom Image (Prompt)
 - `/save` — interactive menu to save either:
   - Save Background (Auto) — last `/txt` background if available, else latest background
   - Save Last Background and Text — full composite `/txt` image

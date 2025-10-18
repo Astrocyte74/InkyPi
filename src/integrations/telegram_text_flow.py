@@ -32,6 +32,7 @@ class TelegramTextFlow:
         ("none", "None"),
         ("latest", "Use Last Image"),
         ("ai_image", "Auto-Generate Image"),
+        ("weather", "Live Weather"),
         ("color", "Solid Colour"),
         ("saved", "Saved Image"),
         ("custom_ai", "Custom Image (Prompt)"),
@@ -195,10 +196,11 @@ class TelegramTextFlow:
             ],
             [
                 bg_btn("latest", "Use Last Image"),
-                bg_btn("saved", "Saved Image"),
+                bg_btn("weather", "Live Weather"),
             ],
             [
                 bg_btn("color", "Solid Colour"),
+                bg_btn("saved", "Saved Image"),
                 bg_btn("custom_ai", "Custom Image (Prompt)"),
             ],
         ]
@@ -515,6 +517,8 @@ class TelegramTextFlow:
                 logger.warning("Latest display image not found; using solid background.")
         elif background_mode == "ai_image":
             background_path = self._generate_ai_background(final_text)
+        elif background_mode == "weather":
+            background_path = self._generate_weather_background()
         elif background_mode == "custom_ai":
             background_path = request.get("custom_background")
             if not background_path:
@@ -533,7 +537,7 @@ class TelegramTextFlow:
                 raise RuntimeError("Saved image not found.")
             background_path = candidate
         # If an image background is used, default placement to bottom band
-        if background_mode in {"ai_image", "custom_ai", "latest", "saved"}:
+        if background_mode in {"ai_image", "custom_ai", "latest", "saved", "weather"}:
             placement = "bottom"
 
         # Persist last background used for /txt to allow saving later
@@ -703,6 +707,21 @@ class TelegramTextFlow:
         logger.info("Generated AI background for Telegram text at %s", path)
         return path
 
+    def _generate_weather_background(self):
+        plugin = self._get_weather_plugin()
+        if not plugin:
+            raise RuntimeError("Weather plugin is not installed.")
+        plugin_config = self.device_config.get_plugin("weather")
+        if not plugin_config:
+            raise RuntimeError("Weather plugin is not configured.")
+        settings = plugin_config.get("plugin_settings") or {}
+        image = plugin.generate_image(settings, self.device_config)
+        filename = datetime.utcnow().strftime("telegram_text_weather_bg_%Y%m%d_%H%M%S.png")
+        path = os.path.join(self.storage_dir, filename)
+        image.save(path)
+        logger.info("Generated Weather background for Telegram text at %s", path)
+        return path
+
     def _render_text_image(self, text, style, background_path, background_color=None, placement="center"):
         plugin = self._get_text_plugin()
         if not plugin:
@@ -754,6 +773,12 @@ class TelegramTextFlow:
 
     def _get_text_plugin(self):
         plugin_config = self.device_config.get_plugin("telegram_text")
+        if not plugin_config:
+            return None
+        return get_plugin_instance(plugin_config)
+
+    def _get_weather_plugin(self):
+        plugin_config = self.device_config.get_plugin("weather")
         if not plugin_config:
             return None
         return get_plugin_instance(plugin_config)
