@@ -7,6 +7,14 @@ import requests
 import logging
 import os
 
+try:
+    # Optional Gemini image backend (google-genai)
+    from google import genai
+    from google.genai import types as genai_types
+except ImportError:  # pragma: no cover - handled at runtime if missing
+    genai = None
+    genai_types = None
+
 logger = logging.getLogger(__name__)
 
 IMAGE_MODELS = ["dall-e-3", "dall-e-2", "gpt-image-1"]
@@ -73,16 +81,10 @@ class AIImage(BasePlugin):
 
     def generate_image(self, settings, device_config):
 
-        api_key = device_config.load_env_key("OPEN_AI_SECRET")
         display_guidance_enabled = AIImage._display_guidance_enabled(device_config)
-        if not api_key:
-            raise RuntimeError("OPEN AI API Key not configured.")
-
         text_prompt = settings.get("textPrompt", "")
 
         image_model = settings.get('imageModel', DEFAULT_IMAGE_MODEL)
-        if image_model not in IMAGE_MODELS:
-            raise RuntimeError("Invalid Image Model provided.")
         image_quality = settings.get('quality', "medium" if image_model == "gpt-image-1" else "standard")
         randomize_prompt = settings.get('randomizePrompt') == 'true'
         creative_enhance = settings.get('creativeEnhance') == 'true'
@@ -92,9 +94,23 @@ class AIImage(BasePlugin):
         if style_hint == 'van_gogh':
             van_gogh_style = True
 
+        # Gemini image backend: handled separately using GEMINI_API_KEY and google-genai
+        if isinstance(image_model, str) and image_model.startswith("gemini-"):
+            return self._generate_gemini_image(
+                settings=settings,
+                device_config=device_config,
+                display_guidance_enabled=display_guidance_enabled,
+            )
+
+        api_key = device_config.load_env_key("OPEN_AI_SECRET")
+        if image_model not in IMAGE_MODELS:
+            raise RuntimeError("Invalid Image Model provided.")
+        if not api_key:
+            raise RuntimeError("OPEN AI API Key not configured.")
+
         image = None
         try:
-            ai_client = OpenAI(api_key = api_key)
+            ai_client = OpenAI(api_key=api_key)
             prompt_client = self._get_prompt_client(device_config, ai_client)
             if randomize_prompt:
                 text_prompt = AIImage.fetch_image_prompt(prompt_client, text_prompt)
@@ -128,9 +144,131 @@ class AIImage(BasePlugin):
                 display_guidance=display_guidance_enabled,
             )
         except Exception as e:
-            logger.error(f"Failed to make Open AI request: {str(e)}")
-            raise RuntimeError("Open AI request failure, please check logs.")
+            logger.error("Failed to make Open AI request: %s", str(e))
+            raise RuntimeError("Open AI request failure, please check logs.") from e
         return image
+
+    def _generate_gemini_image(self, settings, device_config, display_guidance_enabled):
+        """Generate an image using Gemini via google-genai."""
+        if genai is None or genai_types is None:
+            raise RuntimeError(
+                "Gemini image backend requires the 'google-genai' package. "
+                "Run the InkyPi update script to install missing dependencies."
+            )
+
+        api_key = device_config.load_env_key("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY is not configured.")
+
+        text_prompt = settings.get("textPrompt", "") or ""
+        image_model = settings.get("imageModel") or "gemini-3-pro-image-preview"
+        randomize_prompt = settings.get("randomizePrompt") == "true"
+        creative_enhance = settings.get("creativeEnhance") == "true"
+        palette = (settings.get("palette") or "spectra6").lower()
+        style_hint = (settings.get("styleHint") or "").lower()
+        van_gogh_style = settings.get("vanGoghStyle") == "true" or style_hint == "van_gogh"
+
+        # Optional prompt rewriting using existing prompt service (OpenAI/OpenRouter) if available
+        prompt_client = None
+        openai_key = device_config.load_env_key("OPEN_AI_SECRET")
+        openrouter_key = device_config.load_env_key("OPEN_ROUTER_SECRET")
+        try:
+            ai_client = OpenAI(api_key=openai_key) if openai_key else None
+            if openai_key or openrouter_key:
+                prompt_client = self._get_prompt_client(device_config, ai_client)
+        except Exception:
+            prompt_client = None
+
+        if prompt_client:
+            try:
+                if randomize_prompt:
+                    text_prompt = AIImage.fetch_image_prompt(prompt_client, text_prompt)
+                elif creative_enhance:
+                    text_prompt = AIImage.enhance_prompt(prompt_client, text_prompt)
+                elif style_hint in {"van_gogh", "illustration", "far_side"}:
+                    text_prompt = AIImage.style_rewrite_prompt(prompt_client, text_prompt, style_hint)
+            except Exception:
+                logger.exception("Gemini: prompt enhancement failed; falling back to raw prompt.")
+
+        # Apply display and palette guidance for e-ink panel
+        if display_guidance_enabled:
+            if palette == "bw":
+                text_prompt = f"{text_prompt}. {MONO_INSTRUCTIONS}"
+            else:
+                text_prompt = f"{text_prompt}. {SPECTRA6_INSTRUCTIONS}"
+
+        if van_gogh_style or style_hint == "van_gogh":
+            text_prompt = f"{text_prompt}. {VAN_GOGH_INSTRUCTIONS}"
+        elif style_hint == "illustration":
+            text_prompt = f"{text_prompt}. {ILLUSTRATION_INSTRUCTIONS}"
+        elif style_hint == "drawing":
+            text_prompt = f"{text_prompt}. {DRAWING_INSTRUCTIONS}"
+        elif style_hint == "far_side":
+            text_prompt = f"{text_prompt}. {FAR_SIDE_INSTRUCTIONS}"
+
+        if display_guidance_enabled:
+            text_prompt += (
+                ". The image should fully occupy the entire canvas without any frames, "
+                "borders, or cropped areas. No blank spaces or artificial framing."
+            )
+            text_prompt += (
+                "Focus on simplicity, bold shapes, and strong contrast to enhance clarity "
+                "and visual appeal. Avoid excessive detail or complex gradients, ensuring "
+                "the design works well with flat, vibrant colors."
+            )
+
+        orientation = device_config.get_config("orientation") or "horizontal"
+        aspect_ratio = "1024:1536" if orientation == "vertical" else "1536:1024"
+
+        logger.info(
+            "Generating Gemini image | model=%s | orientation=%s | aspect=%s",
+            image_model,
+            orientation,
+            aspect_ratio,
+        )
+
+        try:
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model=image_model,
+                contents=text_prompt,
+                config=genai_types.GenerateContentConfig(
+                    response_modalities=["IMAGE"],
+                    image_config=genai_types.ImageConfig(
+                        aspect_ratio=aspect_ratio,
+                        image_size="2K",
+                    ),
+                ),
+            )
+        except Exception as e:
+            logger.exception("Gemini image request failed: %s", e)
+            raise RuntimeError("Gemini image request failure, please check logs.") from e
+
+        # Extract inline image bytes
+        try:
+            candidate = response.candidates[0]
+            image_bytes = next(
+                (
+                    part.inline_data.data
+                    for part in candidate.content.parts
+                    if getattr(part, "inline_data", None)
+                ),
+                None,
+            )
+        except Exception as e:
+            logger.exception("Unexpected Gemini response format: %s", e)
+            image_bytes = None
+
+        if not image_bytes:
+            raise RuntimeError("Gemini returned no image data.")
+
+        try:
+            img = Image.open(BytesIO(image_bytes)).convert("RGB")
+        except Exception as e:
+            logger.exception("Failed to decode Gemini image bytes: %s", e)
+            raise RuntimeError("Gemini image decoding failure, please check logs.") from e
+
+        return img
 
     @staticmethod
     def fetch_image(

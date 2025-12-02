@@ -108,3 +108,15 @@ Optional for using OpenRouter-compatible text models when randomising or enhanci
     ```
 - Restart the InkyPi service: `sudo systemctl restart inkypi.service`
 - When set, InkyPi uses the specified OpenRouter model for prompt rewriting; image generation still uses OpenAI's image API.
+
+## Gemini Image Key
+
+Optional for using Gemini as an additional image backend in the AI Image plugin (for example, via the Telegram `/ai` model picker).
+
+- Create an API key in the Google AI Studio / Gemini console.
+- Add the key to `/usr/local/inkypi/.env`:
+    ```
+    GEMINI_API_KEY=your-gemini-key
+    ```
+- Restart the InkyPi service: `sudo systemctl restart inkypi.service`
+- When set, selecting a Gemini image model (e.g. "Gemini 3 Pro Image") in the UI or Telegram bot routes image generation through Gemini instead of OpenAI for that request. Prompt rewriting still uses OpenAI/OpenRouter when configured.

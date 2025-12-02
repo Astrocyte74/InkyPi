@@ -196,6 +196,7 @@ sudo nano .env</code></pre>
   <ul>
     <li><code>OPEN_WEATHER_MAP_SECRET</code> &mdash; required for the Weather plugin (One Call API 3.0 subscription; free up to 1,000 requests/day).</li>
     <li><code>OPEN_AI_SECRET</code> &mdash; for AI Image/Text plugins.</li>
+    <li><code>GEMINI_API_KEY</code> &mdash; optional, enable Gemini as an additional AI image backend.</li>
     <li><code>NASA_SECRET</code> &mdash; for Astronomy Picture of the Day.</li>
     <li><code>UNSPLASH_ACCESS_KEY</code> &mdash; for the Unsplash plugin.</li>
   </ul>
@@ -209,6 +210,10 @@ OPEN_WEATHER_MAP_SECRET=replace-with-your-openweather-key
 # OpenAI (AI Image / AI Text)
 # Create a key: https://platform.openai.com/
 OPEN_AI_SECRET=replace-with-your-openai-key
+
+# Gemini (optional AI Image backend)
+# Create a key in Google AI Studio / Gemini console
+GEMINI_API_KEY=replace-with-your-gemini-key
 
 # NASA Astronomy Picture of the Day
 # Request a key: https://api.nasa.gov/

@@ -29,12 +29,15 @@ class TelegramBotListener:
         ("dall-e-3", "DALL·E 3"),
         ("gpt-image-1", "GPT Image 1"),
         ("dall-e-2", "DALL·E 2"),
+        ("gemini-3-pro-image-preview", "Gemini 3 Pro Image"),
     ]
 
     QUALITY_OPTIONS = {
         "dall-e-3": ["standard", "hd"],
         "gpt-image-1": ["medium", "high", "low"],
         "dall-e-2": ["standard"],
+        # Gemini quality is interpreted as image size hints; keep a single sensible option.
+        "gemini-3-pro-image-preview": ["2k"],
     }
 
     STYLE_OPTIONS = [
