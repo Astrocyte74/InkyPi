@@ -106,11 +106,11 @@ Quick commands:
   - Save Background (Auto) — last `/txt` background if available, else latest background
   - Save Last Background and Text — full composite `/txt` image
 - `/load` — interactive picker to preview, display, or use a saved background
-- `/weather` (`/wx`) — toggle Weather badge vs overlay and pick badge position
+ - `/weather` (`/wx`) — toggle weather badge vs overlay and pick badge position
 - `/slideshow` — open slideshow controls (filter bg/composite/all, interval, shuffle, weather badge/overlay); `/stop` ends it
 - `/status` — send the latest background image
 
-Setup: add `TELEGRAM_BOT_TOKEN` (and optionally `TELEGRAM_ALLOWED_IDS`) to `.env`, then restart. See `docs/api_keys.md` for details. For Live Weather backgrounds and the Weather Badge overlay, configure the Weather plugin (latitude/longitude, units, and API key).
+Setup: add `TELEGRAM_BOT_TOKEN` (and optionally `TELEGRAM_ALLOWED_IDS`) to `.env`, then restart. See `docs/api_keys.md` for details. For Live Weather backgrounds and the weather badge overlay, configure the Weather plugin (latitude/longitude, units, and API key).
 
 ## Update
 To update your InkyPi with the latest code changes, follow these steps:

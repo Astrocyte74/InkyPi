@@ -1794,7 +1794,7 @@ class TelegramBotListener:
     def _send_load_menu(self, chat_id):
         text = (
             "Load Saved Image\n\n"
-            "Pick an image to preview, display, or use as background."
+            "Pick an image to preview, display, use as background, or include in slideshows started with /slideshow."
         )
         try:
             names = self.text_flow._list_saved_names()  # pylint: disable=protected-access
