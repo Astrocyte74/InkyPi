@@ -102,6 +102,18 @@ class TelegramBotListener:
         self.load_filters = {}
         self.load_wx = {}
         self.wx_menu_ids = {}
+        self.ss_menu_ids = {}
+        # Slideshow state
+        self.slideshow_thread = None
+        self.slideshow_stop = threading.Event()
+        self.slideshow_state = {
+            "active": False,
+            "filter": "all",   # all|bg|composite
+            "interval": 60,     # seconds
+            "shuffle": False,
+            "weather": "off",  # off|badge|overlay
+            "was_refresh_running": False,
+        }
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -283,6 +295,10 @@ class TelegramBotListener:
             self._init_text_prompt(chat_id, message)
         elif text.lower().startswith("/weather") or text.lower().startswith("/wx"):
             self._send_weather_menu(chat_id)
+        elif text.lower().startswith("/slideshow"):
+            self._handle_slideshow_command(text, chat_id)
+        elif text.lower().strip() == "/stop":
+            self._stop_slideshow(chat_id)
         else:
             self._init_ai_prompt(chat_id, text)
 
@@ -764,6 +780,70 @@ class TelegramBotListener:
                     logger.exception("Failed to close weather menu")
                 self._answer_callback(callback_query["id"]) 
             else:
+                self._answer_callback(callback_query["id"]) 
+        elif flow_type == "ss":
+            action = parts[1] if len(parts) > 1 else None
+            arg = parts[2] if len(parts) > 2 else None
+            chat_id = callback_query.get("message", {}).get("chat", {}).get("id")
+            message_id = callback_query.get("message", {}).get("message_id")
+            try:
+                if action == "open":
+                    self._send_slideshow_menu(chat_id)
+                    self._answer_callback(callback_query["id"]) 
+                elif action == "cycle_filter":
+                    order = ["all", "bg", "composite"]
+                    cur = self.slideshow_state.get("filter", "all")
+                    try:
+                        idx = order.index(cur)
+                    except ValueError:
+                        idx = 0
+                    self.slideshow_state["filter"] = order[(idx + 1) % len(order)]
+                    self._refresh_slideshow_menu(chat_id, message_id)
+                    self._answer_callback(callback_query["id"], text=f"Filter: {self.slideshow_state['filter']}")
+                elif action == "interval" and arg in {"inc", "dec"}:
+                    delta = 10 if arg == "inc" else -10
+                    cur = int(self.slideshow_state.get("interval", 60))
+                    self.slideshow_state["interval"] = max(5, cur + delta)
+                    self._refresh_slideshow_menu(chat_id, message_id)
+                    self._answer_callback(callback_query["id"], text=f"Interval: {self.slideshow_state['interval']}s")
+                elif action == "toggle_shuffle":
+                    self.slideshow_state["shuffle"] = not bool(self.slideshow_state.get("shuffle"))
+                    self._refresh_slideshow_menu(chat_id, message_id)
+                    self._answer_callback(callback_query["id"], text=f"Shuffle: {'On' if self.slideshow_state['shuffle'] else 'Off'}")
+                elif action == "cycle_weather":
+                    order = ["off", "badge", "overlay"]
+                    cur = self.slideshow_state.get("weather", "off")
+                    try:
+                        idx = order.index(cur)
+                    except ValueError:
+                        idx = 0
+                    self.slideshow_state["weather"] = order[(idx + 1) % len(order)]
+                    self._refresh_slideshow_menu(chat_id, message_id)
+                    self._answer_callback(callback_query["id"], text=f"Weather: {self.slideshow_state['weather']}")
+                elif action == "start":
+                    # Use current staged values
+                    st = self.slideshow_state
+                    self._start_slideshow(chat_id, filt=st.get('filter','all'), interval=int(st.get('interval',60)), shuffle=bool(st.get('shuffle')), weather=st.get('weather','off'))
+                    self._refresh_slideshow_menu(chat_id, message_id)
+                    self._answer_callback(callback_query["id"], text="Slideshow starting")
+                elif action == "stop":
+                    self._stop_slideshow(chat_id)
+                    self._refresh_slideshow_menu(chat_id, message_id)
+                    self._answer_callback(callback_query["id"], text="Slideshow stopped")
+                elif action == "close":
+                    try:
+                        self._api_post("editMessageReplyMarkup", data={
+                            "chat_id": chat_id,
+                            "message_id": message_id,
+                            "reply_markup": json.dumps({"inline_keyboard": []}),
+                        })
+                    except Exception:
+                        logger.exception("Failed to close slideshow menu")
+                    self._answer_callback(callback_query["id"]) 
+                else:
+                    self._answer_callback(callback_query["id"]) 
+            except Exception:
+                logger.exception("Slideshow menu handling failed")
                 self._answer_callback(callback_query["id"]) 
         elif flow_type == "save":
             chat_id = callback_query.get("message", {}).get("chat", {}).get("id")
@@ -1802,3 +1882,218 @@ class TelegramBotListener:
         if alert:
             data["show_alert"] = True
         self._api_post("answerCallbackQuery", data=data)
+
+    # --- Slideshow ----------------------------------------------------------
+
+    def _handle_slideshow_command(self, text, chat_id):
+        parts = text.split()
+        if len(parts) == 1:
+            # Open menu by default
+            self._send_slideshow_menu(chat_id)
+            return
+        if len(parts) >= 2 and parts[1].lower() in {"help", "?", "menu"}:
+            self._send_slideshow_menu(chat_id)
+            return
+        action = parts[1].lower()
+        if action == "start":
+            # Defaults
+            filt = "all"
+            interval = 60
+            shuffle = False
+            weather = "off"
+            # Parse remaining tokens
+            for token in parts[2:]:
+                t = token.strip()
+                if t in {"all", "bg", "composite"}:
+                    filt = t
+                elif t.startswith("interval="):
+                    try:
+                        interval = max(5, int(t.split("=", 1)[1]))
+                    except Exception:
+                        pass
+                elif t.startswith("shuffle="):
+                    val = t.split("=", 1)[1].lower()
+                    shuffle = val in {"on", "true", "1", "yes"}
+                elif t.startswith("weather="):
+                    val = t.split("=", 1)[1].lower()
+                    if val in {"off", "badge", "overlay"}:
+                        weather = val
+            self._start_slideshow(chat_id, filt=filt, interval=interval, shuffle=shuffle, weather=weather)
+        elif action == "stop":
+            self._stop_slideshow(chat_id)
+        else:
+            self._send_message(chat_id, "Use /slideshow start … or /slideshow stop")
+
+    def _start_slideshow(self, chat_id, filt="all", interval=60, shuffle=False, weather="off"):
+        if self.slideshow_state.get("active"):
+            self._send_message(chat_id, "Slideshow already running. Use /slideshow stop to end.")
+            return
+        # Collect saved images
+        try:
+            names = self.text_flow._list_saved_names()  # pylint: disable=protected-access
+        except Exception:
+            logger.exception("Failed to list saved images for slideshow")
+            names = []
+        if filt == "bg":
+            names = [n for n in names if n.startswith("bg_") or n.startswith("txtbg_")]
+        elif filt == "composite":
+            names = [n for n in names if n.startswith("composite_")]
+        if not names:
+            self._send_message(chat_id, f"No saved images for filter '{filt}'.")
+            return
+        self.slideshow_state.update({
+            "active": True,
+            "filter": filt,
+            "interval": interval,
+            "shuffle": shuffle,
+            "weather": weather,
+            "was_refresh_running": bool(self.refresh_task.running),
+        })
+        # Pause refresh task to avoid interference
+        if self.refresh_task.running:
+            self.refresh_task.stop()
+        # Start thread
+        self.slideshow_stop.clear()
+        self.slideshow_thread = threading.Thread(
+            target=self._slideshow_loop,
+            args=(chat_id,),
+            name="TelegramSlideshow",
+            daemon=True,
+        )
+        self.slideshow_thread.start()
+        self._send_message(chat_id, f"Slideshow started: {len(names)} items | filter={filt} | interval={interval}s | shuffle={'on' if shuffle else 'off'} | weather={weather}")
+
+    def _stop_slideshow(self, chat_id):
+        if not self.slideshow_state.get("active"):
+            self._send_message(chat_id, "No slideshow is running.")
+            return
+        self.slideshow_stop.set()
+        if self.slideshow_thread and self.slideshow_thread.is_alive():
+            self.slideshow_thread.join(timeout=2)
+        self.slideshow_state["active"] = False
+        # Resume refresh task if it was running before
+        if self.slideshow_state.get("was_refresh_running") and not self.refresh_task.running:
+            self.refresh_task.start()
+        self._send_message(chat_id, "Slideshow stopped.")
+
+    def _slideshow_loop(self, chat_id):
+        try:
+            st = dict(self.slideshow_state)
+            try:
+                names = self.text_flow._list_saved_names()  # pylint: disable=protected-access
+            except Exception:
+                logger.exception("Failed to list saved images for slideshow loop")
+                names = []
+            if st["filter"] == "bg":
+                names = [n for n in names if n.startswith("bg_") or n.startswith("txtbg_")]
+            elif st["filter"] == "composite":
+                names = [n for n in names if n.startswith("composite_")]
+            if not names:
+                self._send_message(chat_id, "Slideshow ended: no items.")
+                return
+            if st["shuffle"]:
+                import random
+                random.shuffle(names)
+            idx = 0
+            while not self.slideshow_stop.is_set():
+                name = names[idx % len(names)]
+                idx += 1
+                path = os.path.join(self.text_flow.storage_dir, "saved", f"{name}.png")
+                try:
+                    with Image.open(path) as img:
+                        final_img = img.convert("RGB")
+                    # Apply overlays per slideshow weather mode; obey composite rule
+                    is_composite = name.startswith("composite_")
+                    try:
+                        if st["weather"] == "badge":
+                            final_img = self.text_flow.overlay_weather_badge(final_img)
+                        elif st["weather"] == "overlay" and not is_composite:
+                            final_img = self.text_flow.overlay_weather_caption(final_img)
+                        elif st["weather"] == "off":
+                            # Apply global overlay if enabled and allowed
+                            opts = self._get_weather_options()
+                            if (opts.get("weather", {}).get("overlay", {}).get("enabled")) and not is_composite:
+                                final_img = self.text_flow.overlay_weather_caption(final_img)
+                    except Exception:
+                        logger.exception("Slideshow overlay failed")
+                    # Display
+                    self.display_manager.display_image(final_img)
+                    current_dt = self.refresh_task._get_current_datetime() if hasattr(self.refresh_task, "_get_current_datetime") else datetime.utcnow()
+                    image_hash = compute_image_hash(final_img)
+                    refresh_info = RefreshInfo(
+                        refresh_type="Slideshow",
+                        plugin_id="slideshow",
+                        refresh_time=current_dt.isoformat(),
+                        image_hash=image_hash,
+                    )
+                    self.device_config.refresh_info = refresh_info
+                    self.device_config.write_config()
+                except Exception:
+                    logger.exception("Slideshow display failed for %s", name)
+                # Wait interval or until stopped
+                stop = self.slideshow_stop.wait(timeout=st["interval"])
+                if stop:
+                    break
+        finally:
+            self.slideshow_state["active"] = False
+            # Resume refresh task if needed
+            if self.slideshow_state.get("was_refresh_running") and not self.refresh_task.running:
+                self.refresh_task.start()
+
+    # --- Slideshow menu -----------------------------------------------------
+
+    def _send_slideshow_menu(self, chat_id, message_id=None):
+        st = self.slideshow_state
+        lines = [
+            "🖼 Slideshow",
+            f"Status: {'Active' if st['active'] else 'Stopped'}",
+            f"Filter: {st['filter']} | Interval: {st['interval']}s | Shuffle: {'on' if st['shuffle'] else 'off'}",
+            f"Weather: {st['weather']}",
+        ]
+        text = "\n".join(lines)
+        kb = {"inline_keyboard": [
+            [
+                {"text": f"Filter: {st['filter']}", "callback_data": "ss|cycle_filter"},
+            ],
+            [
+                {"text": "-10s", "callback_data": "ss|interval|dec"},
+                {"text": f"Interval: {st['interval']}s", "callback_data": "ss|noop"},
+                {"text": "+10s", "callback_data": "ss|interval|inc"},
+            ],
+            [
+                {"text": f"Shuffle: {'On' if st['shuffle'] else 'Off'}", "callback_data": "ss|toggle_shuffle"},
+            ],
+            [
+                {"text": f"Weather: {st['weather'].title()}", "callback_data": "ss|cycle_weather"},
+            ],
+            [
+                {"text": ("⏹ Stop" if st['active'] else "▶️ Start"), "callback_data": ("ss|stop" if st['active'] else "ss|start")},
+                {"text": "✖️ Close", "callback_data": "ss|close"},
+            ],
+        ]}
+        if message_id:
+            try:
+                self._api_post("editMessageText", data={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "text": text,
+                    "reply_markup": json.dumps(kb),
+                })
+            except Exception:
+                logger.exception("Failed to edit slideshow menu; sending new one.")
+                self._api_post("sendMessage", data={"chat_id": chat_id, "text": text, "reply_markup": json.dumps(kb)})
+        else:
+            resp = self._api_post("sendMessage", data={"chat_id": chat_id, "text": text, "reply_markup": json.dumps(kb)})
+            try:
+                mid = resp.get("result", {}).get("message_id")
+                if mid:
+                    self.ss_menu_ids[chat_id] = mid
+            except Exception:
+                pass
+
+    def _refresh_slideshow_menu(self, chat_id, message_id=None):
+        message_id = message_id or self.ss_menu_ids.get(chat_id)
+        if message_id:
+            self._send_slideshow_menu(chat_id, message_id)
+        else:
+            self._send_slideshow_menu(chat_id)
