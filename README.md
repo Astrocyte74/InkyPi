@@ -95,7 +95,7 @@ For more details, including instructions on how to image your microSD with Raspb
 
 ## Telegram Bot (Remote Control)
 
-InkyPi includes a Telegram bot so you can update the display remotely, generate AI backgrounds, compose short notes, and manage saved images.
+InkyPi includes a Telegram bot so you can update the display remotely, generate AI backgrounds, compose short notes, and manage saved images. The `/ai` picker supports OpenAI (DALL·E, GPT Image) and Gemini image models when `GEMINI_API_KEY` is configured.
 
 Quick commands:
 

@@ -26,10 +26,10 @@ class TelegramBotListener:
     FILE_BASE = "https://api.telegram.org/file/bot{token}"
 
     AI_MODELS = [
+        ("gemini-3-pro-image-preview", "Gemini 3 Pro Image"),
         ("dall-e-3", "DALL·E 3"),
         ("gpt-image-1", "GPT Image 1"),
         ("dall-e-2", "DALL·E 2"),
-        ("gemini-3-pro-image-preview", "Gemini 3 Pro Image"),
     ]
 
     QUALITY_OPTIONS = {
