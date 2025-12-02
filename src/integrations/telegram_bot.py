@@ -1429,6 +1429,11 @@ class TelegramBotListener:
             "",
             f"Badge: {'On' if badge_on else 'Off'} (pos {pos})",
             f"Overlay: {'On' if overlay_on else 'Off'}",
+            "",
+            "Notes:",
+            "- Badge adds a small temperature icon in a corner.",
+            "- Full overlay adds a bottom caption bar with weather summary.",
+            "- When overlay is On here, it applies to AI, text, /load, and slideshows (skipped for composite images).",
         ]
         text = "\n".join(lines)
 
