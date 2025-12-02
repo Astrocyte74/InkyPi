@@ -100,6 +100,8 @@ class TelegramBotListener:
         self.pending_save = {}
         self.pending_txt_bg = {}
         self.load_filters = {}
+        self.load_wx = {}
+        self.wx_menu_ids = {}
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -279,6 +281,8 @@ class TelegramBotListener:
                 self._send_message(chat_id, "Usage: /txt <message>")
                 return
             self._init_text_prompt(chat_id, message)
+        elif text.lower().startswith("/weather") or text.lower().startswith("/wx"):
+            self._send_weather_menu(chat_id)
         else:
             self._init_ai_prompt(chat_id, text)
 
@@ -473,9 +477,24 @@ class TelegramBotListener:
                 palette_label = self._get_palette_label(request["palette"])
                 self._answer_callback(callback_query["id"], text=f"Palette: {palette_label}.")
             elif action == "wbadge" and param:
+                # Single-select: Badge ON implies Overlay OFF
                 request["wbadge"] = (param == "on")
+                if request["wbadge"]:
+                    request["woverlay"] = False
                 self._refresh_ai_message(request)
-                self._answer_callback(callback_query["id"], text=f"Weather badge: {'On' if request.get('wbadge') else 'Off'}")
+                self._answer_callback(callback_query["id"], text=f"Weather: {'Badge' if request.get('wbadge') else 'Off'}")
+            elif action == "wover" and param:
+                # Single-select: Overlay ON implies Badge OFF
+                request["woverlay"] = (param == "on")
+                if request["woverlay"]:
+                    request["wbadge"] = False
+                self._refresh_ai_message(request)
+                self._answer_callback(callback_query["id"], text=f"Weather: {'Overlay' if request.get('woverlay') else 'Off'}")
+            elif action == "woff":
+                request["wbadge"] = False
+                request["woverlay"] = False
+                self._refresh_ai_message(request)
+                self._answer_callback(callback_query["id"], text="Weather: Off")
             elif action == "generate":
                 self._answer_callback(callback_query["id"], text="Generating image…")
                 request["locked"] = True
@@ -488,6 +507,10 @@ class TelegramBotListener:
             elif action == "cancel":
                 self._answer_callback(callback_query["id"], text="Cancelled.")
                 self._cancel_ai_request(request_id, status_text="Cancelled.")
+            elif action == "open_wx":
+                chat_id = callback_query["message"]["chat"]["id"]
+                self._send_weather_menu(chat_id)
+                self._answer_callback(callback_query["id"], text="Weather options opened.")
             else:
                 self._answer_callback(callback_query["id"])
         elif flow_type == "txt":
@@ -525,9 +548,24 @@ class TelegramBotListener:
                 self._refresh_text_message(request)
                 self._answer_callback(callback_query["id"], text=f"Rewrite: {status}")
             elif action == "wbadge" and param:
+                # Single-select: Badge ON implies Overlay OFF
                 self.text_flow.set_wbadge(request, param == "on")
+                if request.get("wbadge"):
+                    self.text_flow.set_woverlay(request, False)
                 self._refresh_text_message(request)
-                self._answer_callback(callback_query["id"], text=f"Weather badge: {'On' if request.get('wbadge') else 'Off'}")
+                self._answer_callback(callback_query["id"], text=f"Weather: {'Badge' if request.get('wbadge') else 'Off'}")
+            elif action == "wover" and param:
+                # Single-select: Overlay ON implies Badge OFF
+                self.text_flow.set_woverlay(request, param == "on")
+                if request.get("woverlay"):
+                    self.text_flow.set_wbadge(request, False)
+                self._refresh_text_message(request)
+                self._answer_callback(callback_query["id"], text=f"Weather: {'Overlay' if request.get('woverlay') else 'Off'}")
+            elif action == "woff":
+                self.text_flow.set_wbadge(request, False)
+                self.text_flow.set_woverlay(request, False)
+                self._refresh_text_message(request)
+                self._answer_callback(callback_query["id"], text="Weather: Off")
             elif action == "cycle_background":
                 # Backward compatibility
                 self.text_flow.cycle_background(request)
@@ -682,6 +720,51 @@ class TelegramBotListener:
                 self._answer_callback(callback_query["id"], text="Cancelled.")
             else:
                 self._answer_callback(callback_query["id"])
+        elif flow_type == "wx":
+            action = parts[1] if len(parts) > 1 else None
+            arg = parts[2] if len(parts) > 2 else None
+            chat_id = callback_query.get("message", {}).get("chat", {}).get("id")
+            message_id = callback_query.get("message", {}).get("message_id")
+            opts = self._get_weather_options()
+            if action == "open":
+                self._send_weather_menu(chat_id)
+                self._answer_callback(callback_query["id"], text="Weather options opened.")
+            elif action == "badge" and arg in {"on", "off"}:
+                enabled = arg == "on"
+                opts.setdefault("weather", {}).setdefault("badge", {})["enabled"] = enabled
+                self._set_weather_options(opts)
+                self._refresh_weather_menu(chat_id, message_id)
+                self._answer_callback(callback_query["id"], text=f"Badge: {'On' if enabled else 'Off'}")
+            elif action == "pos" and arg == "cycle":
+                pos = opts.get("weather", {}).get("badge", {}).get("position", "tr").lower()
+                order = ["tr", "tl", "bl", "br"]
+                try:
+                    idx = order.index(pos)
+                except ValueError:
+                    idx = 0
+                new_pos = order[(idx + 1) % len(order)]
+                opts.setdefault("weather", {}).setdefault("badge", {})["position"] = new_pos
+                self._set_weather_options(opts)
+                self._refresh_weather_menu(chat_id, message_id)
+                self._answer_callback(callback_query["id"], text=f"Badge pos: {new_pos.upper()}")
+            elif action == "overlay" and arg in {"on", "off"}:
+                enabled = arg == "on"
+                opts.setdefault("weather", {}).setdefault("overlay", {})["enabled"] = enabled
+                self._set_weather_options(opts)
+                self._refresh_weather_menu(chat_id, message_id)
+                self._answer_callback(callback_query["id"], text=f"Overlay: {'On' if enabled else 'Off'}")
+            elif action == "close":
+                try:
+                    self._api_post("editMessageReplyMarkup", data={
+                        "chat_id": chat_id,
+                        "message_id": message_id,
+                        "reply_markup": json.dumps({"inline_keyboard": []}),
+                    })
+                except Exception:
+                    logger.exception("Failed to close weather menu")
+                self._answer_callback(callback_query["id"]) 
+            else:
+                self._answer_callback(callback_query["id"]) 
         elif flow_type == "save":
             chat_id = callback_query.get("message", {}).get("chat", {}).get("id")
             message_id = callback_query.get("message", {}).get("message_id")
@@ -766,32 +849,94 @@ class TelegramBotListener:
             message_id = callback_query.get("message", {}).get("message_id")
             action = parts[1] if len(parts) > 1 else None
             arg = parts[2] if len(parts) > 2 else None
+            extra = parts[3] if len(parts) > 3 else None
             if action == "pick" and arg:
                 name = arg
                 text = f"Load Saved Image\n\nSelected: {name}"
-                markup = {
-                    "inline_keyboard": [
-                        [
-                            {"text": "👁 Preview", "callback_data": f"load|preview|{name}"},
-                            {"text": "🖼 Display Now", "callback_data": f"load|display|{name}"},
-                        ],
-                        [
-                            {"text": "📝 Use as Background", "callback_data": f"load|usetxt|{name}"},
-                        ],
-                        [
-                            {"text": "⬅️ Back", "callback_data": "load|back"},
-                            {"text": "✖️ Cancel", "callback_data": "load|cancel"},
-                        ],
-                    ]
-                }
+                # Determine type by prefix
+                is_bg = name.startswith("bg_") or name.startswith("txtbg_")
+                is_composite = name.startswith("composite_")
+                # Weather prefs for this chat
+                wx = self.load_wx.get(chat_id, {"wbadge": False, "woverlay": False})
+                is_off = not wx.get("wbadge") and not wx.get("woverlay")
+                # Build keyboard depending on type
+                kb = []
+                # Weather row
+                kb.append([{ "text": "Weather:", "callback_data": "load|noop" }])
+                if is_bg:
+                    kb.append([
+                        {"text": f"Off {'✅' if is_off else ''}", "callback_data": f"load|w|off|{name}"},
+                        {"text": f"Badge {'✅' if wx.get('wbadge') else ''}", "callback_data": f"load|w|badge|{name}"},
+                        {"text": f"Overlay {'✅' if wx.get('woverlay') else ''}", "callback_data": f"load|w|overlay|{name}"},
+                        {"text": "Options", "callback_data": "wx|open"},
+                    ])
+                else:
+                    # Composite: allow Badge only (no overlay)
+                    kb.append([
+                        {"text": f"Off {'✅' if is_off else ''}", "callback_data": f"load|w|off|{name}"},
+                        {"text": f"Badge {'✅' if wx.get('wbadge') else ''}", "callback_data": f"load|w|badge|{name}"},
+                        {"text": "Options", "callback_data": "wx|open"},
+                    ])
+                # Primary actions
+                # Preview full-width
+                kb.append([
+                    {"text": "👁 Preview", "callback_data": f"load|preview|{name}"},
+                ])
+                # Display Now + Use with Text on same row (composite: only Display Now)
+                row = [{"text": "🖼 Display Now", "callback_data": f"load|display|{name}"}]
+                if is_bg:
+                    row.append({"text": "📝 Use with Text", "callback_data": f"load|usetxt|{name}"})
+                kb.append(row)
+                # Back/cancel
+                kb.append([
+                    {"text": "⬅️ Back", "callback_data": "load|back"},
+                    {"text": "✖️ Cancel", "callback_data": "load|cancel"},
+                ])
+                markup = {"inline_keyboard": kb}
                 self._refresh_load_message(chat_id, message_id, text, markup)
                 self._answer_callback(callback_query["id"]) 
+            elif action == "w" and arg:
+                # arg in {off,badge,overlay}, extra holds the selected name
+                name = extra
+                if arg == "off":
+                    self.load_wx[chat_id] = {"wbadge": False, "woverlay": False}
+                elif arg == "badge":
+                    self.load_wx[chat_id] = {"wbadge": True, "woverlay": False}
+                elif arg == "overlay":
+                    self.load_wx[chat_id] = {"wbadge": False, "woverlay": True}
+                else:
+                    self._answer_callback(callback_query["id"])
+                    return
+                # Answer this callback quickly to avoid timeout
+                try:
+                    label = "Off" if arg == "off" else ("Badge" if arg == "badge" else "Overlay")
+                    self._answer_callback(callback_query["id"], text=f"Weather: {label}")
+                except Exception:
+                    logger.exception("Failed to answer weather selection callback")
+                # Rebuild the picked UI to reflect selection
+                self._handle_callback({"data": f"load|pick|{name}", "id": callback_query["id"], "message": callback_query["message"]})
+                return
             elif action == "preview" and arg:
                 name = arg
                 path = os.path.join(self.text_flow.storage_dir, "saved", f"{name}.png")
                 try:
                     with Image.open(path) as img:
-                        self._send_photo(chat_id, img, caption=f"Preview: {name}")
+                        final_img = img.convert("RGB")
+                        wx = self.load_wx.get(chat_id, {"wbadge": False, "woverlay": False})
+                        is_composite = name.startswith("composite_")
+                        try:
+                            if wx.get("wbadge"):
+                                final_img = self.text_flow.overlay_weather_badge(final_img)
+                            # Overlay allowed only if not composite
+                            if wx.get("woverlay") and not is_composite:
+                                final_img = self.text_flow.overlay_weather_caption(final_img)
+                            else:
+                                opts = self._get_weather_options()
+                                if (opts.get("weather", {}).get("overlay", {}).get("enabled")) and not is_composite:
+                                    final_img = self.text_flow.overlay_weather_caption(final_img)
+                        except Exception:
+                            logger.exception("Failed to apply weather overlays for load preview")
+                        self._send_photo(chat_id, final_img, caption=f"Preview: {name}")
                     self._answer_callback(callback_query["id"], text="Preview sent.")
                 except Exception as exc:
                     logger.exception("Load preview failed: %s", exc)
@@ -883,13 +1028,76 @@ class TelegramBotListener:
                 name = arg
                 path = os.path.join(self.text_flow.storage_dir, "saved", f"{name}.png")
                 try:
+                    # Build status details
+                    wx = self.load_wx.get(chat_id, {"wbadge": False, "woverlay": False})
+                    is_composite = name.startswith("composite_")
+                    is_bg = name.startswith("bg_") or name.startswith("txtbg_")
+                    badge_pos = self._get_weather_options().get("weather", {}).get("badge", {}).get("position", "TR").upper()
+                    if wx.get("wbadge"):
+                        wlabel = f"Badge ({badge_pos})"
+                    elif wx.get("woverlay") and not is_composite:
+                        wlabel = "Overlay"
+                    else:
+                        # Global overlay (if any) applies later; show Off here for clarity
+                        wlabel = "Off"
+                    # Provider/units
+                    prov_label = "-"
+                    units = "-"
+                    try:
+                        plugin, settings = self.text_flow._get_weather_plugin_and_settings()  # pylint: disable=protected-access
+                        if settings:
+                            provider = (settings.get("weatherProvider") or "OpenWeatherMap").strip()
+                            prov_label = "OWM" if provider == "OpenWeatherMap" else ("OM" if provider == "OpenMeteo" else provider)
+                            units = (settings.get("units") or "metric").strip()
+                    except Exception:
+                        logger.exception("Failed to read weather provider/units for status")
+                    status_lines = [
+                        f"Displaying '{name}'…",
+                        f"Type: {'Background' if is_bg else 'Composite'}",
+                        f"Weather: {wlabel} | Provider: {prov_label} | Units: {units}",
+                    ]
+                    status_text = "\n".join(status_lines)
+                    # Answer callback immediately (avoid 10s timeout) and lock UI
+                    try:
+                        self._answer_callback(callback_query["id"], text="Displaying…")
+                    except Exception:
+                        logger.exception("Failed to answer display callback quickly")
+                    try:
+                        self._refresh_load_message(chat_id, message_id, status_text, {"inline_keyboard": []})
+                    except Exception:
+                        logger.exception("Failed to set displaying status for /load")
                     with Image.open(path) as img:
-                        self.display_manager.display_image(img)
-                    self._refresh_load_message(chat_id, message_id, f"Loaded '{name}' to display.", {"inline_keyboard": []})
-                    self._answer_callback(callback_query["id"], text="Displayed.")
+                        final_img = img.convert("RGB")
+                        try:
+                            if wx.get("wbadge"):
+                                final_img = self.text_flow.overlay_weather_badge(final_img)
+                            if wx.get("woverlay") and not is_composite:
+                                final_img = self.text_flow.overlay_weather_caption(final_img)
+                            else:
+                                opts = self._get_weather_options()
+                                if (opts.get("weather", {}).get("overlay", {}).get("enabled")) and not is_composite:
+                                    final_img = self.text_flow.overlay_weather_caption(final_img)
+                        except Exception:
+                            logger.exception("Failed to apply weather overlays for load display")
+                        self.display_manager.display_image(final_img)
+                    # Send the displayed image back to chat
+                    try:
+                        self._send_photo(chat_id, final_img, caption=f"Displayed: {name}")
+                    except Exception:
+                        logger.exception("Failed to send displayed image back to Telegram for /load")
+                    # Update UI to indicate completion
+                    done_lines = [
+                        f"Loaded '{name}' to display.",
+                        f"Type: {'Background' if is_bg else 'Composite'}",
+                        f"Weather: {wlabel} | Provider: {prov_label} | Units: {units}",
+                    ]
+                    self._refresh_load_message(chat_id, message_id, "\n".join(done_lines), {"inline_keyboard": []})
                 except Exception as exc:
                     logger.exception("Load display failed: %s", exc)
-                    self._answer_callback(callback_query["id"], text="Load failed.")
+                    try:
+                        self._answer_callback(callback_query["id"], text="Load failed.")
+                    except Exception:
+                        logger.exception("Failed to answer callback after load failure")
             elif action == "display_last":
                 path = os.path.join(self.text_flow.storage_dir, "last_text_background.png")
                 if not os.path.exists(path):
@@ -918,6 +1126,7 @@ class TelegramBotListener:
                 except Exception:
                     logger.exception("Failed to prompt for /txt message after load.")
                 self._answer_callback(callback_query["id"], text="Awaiting message…")
+            # removed bgonly action (Display Now is the default no-text path)
             elif action == "back":
                 self._refresh_load_message(chat_id, message_id, "Load Saved Image\n\nPick an image to preview, display, or use as background.", {
                     "inline_keyboard": [[{"text": "✖️ Cancel", "callback_data": "load|cancel"}]]
@@ -951,6 +1160,8 @@ class TelegramBotListener:
             "message_id": None,
             "locked": False,
             "source_text_request_id": source_text_request_id,
+            "wbadge": False,
+            "woverlay": False,
         }
         self._set_style(request, "none")
         self.pending_requests[request_id] = request
@@ -1080,14 +1291,21 @@ class TelegramBotListener:
                 }
             ]
         )
-        # Weather badge toggle
-        w_on = request.get("wbadge", False)
+        # Weather selection row (Off/Badge/Overlay/Options)
+        wbadge_on = bool(request.get("wbadge"))
+        woverlay_on = bool(request.get("woverlay"))
+        is_off = not wbadge_on and not woverlay_on
         keyboard.append(
             [
-                {
-                    "text": f"🌤 Badge: {'On' if w_on else 'Off'}",
-                    "callback_data": f"ai|{request_id}|wbadge|{'off' if w_on else 'on'}",
-                }
+                {"text": f"Weather:", "callback_data": f"ai|{request_id}|noop"},
+            ]
+        )
+        keyboard.append(
+            [
+                {"text": f"Off {'✅' if is_off else ''}".strip(), "callback_data": f"ai|{request_id}|woff"},
+                {"text": f"Badge {'✅' if wbadge_on else ''}".strip(), "callback_data": f"ai|{request_id}|wbadge|on"},
+                {"text": f"Overlay {'✅' if woverlay_on else ''}".strip(), "callback_data": f"ai|{request_id}|wover|on"},
+                {"text": "Options", "callback_data": "wx|open"},
             ]
         )
 
@@ -1105,6 +1323,78 @@ class TelegramBotListener:
         )
 
         return {"inline_keyboard": keyboard}
+
+    # --- Weather options menu ----------------------------------------------
+
+    def _get_weather_options(self):
+        opts = self.device_config.get_config("telegram_options", default={}) or {}
+        # Fill defaults
+        opts.setdefault("weather", {})
+        opts["weather"].setdefault("badge", {"enabled": False, "position": "tr"})
+        opts["weather"].setdefault("overlay", {"enabled": False})
+        return opts
+
+    def _set_weather_options(self, opts):
+        cfg = self.device_config.get_config()
+        cfg["telegram_options"] = opts
+        self.device_config.update_config(cfg)
+
+    def _send_weather_menu(self, chat_id, message_id=None):
+        opts = self._get_weather_options()
+        badge_on = opts["weather"]["badge"]["enabled"]
+        pos = opts["weather"]["badge"]["position"].upper()
+        overlay_on = opts["weather"]["overlay"]["enabled"]
+        lines = [
+            "🌦 Weather Options",
+            "",
+            f"Badge: {'On' if badge_on else 'Off'} (pos {pos})",
+            f"Overlay: {'On' if overlay_on else 'Off'}",
+        ]
+        text = "\n".join(lines)
+
+        kb = {
+            "inline_keyboard": [
+                [
+                    {"text": f"🌤 Badge: {'On' if badge_on else 'Off'}", "callback_data": f"wx|badge|{'off' if badge_on else 'on'}"},
+                ],
+                [
+                    {"text": f"📍 Badge Pos: {pos}", "callback_data": "wx|pos|cycle"},
+                ],
+                [
+                    {"text": f"🗒️ Full Overlay: {'On' if overlay_on else 'Off'}", "callback_data": f"wx|overlay|{'off' if overlay_on else 'on'}"},
+                ],
+                [
+                    {"text": "✖️ Close", "callback_data": "wx|close"},
+                ],
+            ]
+        }
+
+        if message_id:
+            try:
+                self._api_post("editMessageText", data={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "text": text,
+                    "reply_markup": json.dumps(kb),
+                })
+            except Exception:
+                logger.exception("Failed to edit weather menu; sending new one.")
+                self._api_post("sendMessage", data={"chat_id": chat_id, "text": text, "reply_markup": json.dumps(kb)})
+        else:
+            resp = self._api_post("sendMessage", data={"chat_id": chat_id, "text": text, "reply_markup": json.dumps(kb)})
+            try:
+                mid = resp.get("result", {}).get("message_id")
+                if mid:
+                    self.wx_menu_ids[chat_id] = mid
+            except Exception:
+                pass
+
+    def _refresh_weather_menu(self, chat_id, message_id=None):
+        message_id = message_id or self.wx_menu_ids.get(chat_id)
+        if message_id:
+            self._send_weather_menu(chat_id, message_id)
+        else:
+            self._send_weather_menu(chat_id)
 
     def _refresh_ai_message(self, request, status=None):
         summary = self._format_ai_summary(request, status=status)
@@ -1297,7 +1587,22 @@ class TelegramBotListener:
             settings["styleHint"] = "far_side"
 
         image = plugin.generate_image(settings, self.device_config)
-        saved_path = self._save_image(image)
+
+        # Apply optional Weather badge and overlay (per-request and global)
+        final_img = image
+        try:
+            if request.get("wbadge"):
+                final_img = self.text_flow.overlay_weather_badge(final_img)
+            # Full overlay: per-request or global option
+            if request.get("woverlay"):
+                final_img = self.text_flow.overlay_weather_caption(final_img)
+            opts = self._get_weather_options()
+            if (opts.get("weather", {}).get("overlay", {}).get("enabled")):
+                final_img = self.text_flow.overlay_weather_caption(final_img)
+        except Exception:
+            logger.exception("Failed to apply weather overlays for AI image.")
+
+        saved_path = self._save_image(final_img)
 
         def send_photo(caption=None):
             try:
@@ -1307,12 +1612,7 @@ class TelegramBotListener:
                 logger.exception("Failed to send photo back to Telegram")
 
         def finalize():
-            final_img = image
-            try:
-                if request.get("wbadge"):
-                    final_img = self.text_flow._overlay_weather_badge(image)  # pylint: disable=protected-access
-            except Exception:
-                logger.exception("Failed to overlay weather badge for AI image.")
+            # Display the same image used for preview to keep parity
             self.display_manager.display_image(final_img, image_settings=plugin_config.get("image_settings", []))
             current_dt = (
                 self.refresh_task._get_current_datetime()

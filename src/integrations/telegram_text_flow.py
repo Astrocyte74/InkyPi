@@ -3,6 +3,7 @@ import time
 import logging
 from datetime import datetime
 from typing import Dict
+import pytz
 
 from openai import OpenAI
 from PIL import Image, ImageDraw, ImageFont
@@ -69,6 +70,13 @@ class TelegramTextFlow:
         os.makedirs(self.storage_dir, exist_ok=True)
 
         self.requests: Dict[str, Dict] = {}
+        # Weather cache (15 min TTL)
+        self._weather_cache = {
+            "key": None,
+            "ts": 0.0,
+            "data": None,  # dict: {temp_text, icon_path, cond_text, provider, units}
+        }
+        self._WEATHER_TTL_SECONDS = 900
 
     # --- Request lifecycle -------------------------------------------------
 
@@ -99,6 +107,7 @@ class TelegramTextFlow:
             "saved_name": None,
             "saved_page": 0,
             "wbadge": False,
+            "woverlay": False,
             "final_text_preview": None,
         }
         self.requests[request_id] = data
@@ -208,21 +217,19 @@ class TelegramTextFlow:
         ]
 
         # Labels above each section for clarity
+        # Weather selection row (Off / Badge / Overlay / Options)
+        is_off = not request.get("wbadge") and not request.get("woverlay")
         keyboard = [
             [{"text": "Choose style:", "callback_data": f"txt|{request_id}|noop"}],
             style_row,
             [{"text": "Rewrite:", "callback_data": f"txt|{request_id}|noop"}],
             rewrite_row,
-            [{"text": "Weather Badge:", "callback_data": f"txt|{request_id}|noop"}],
+            [{"text": "Weather:", "callback_data": f"txt|{request_id}|noop"}],
             [
-                {
-                    "text": f"Off {'✅' if not request.get('wbadge') else ''}",
-                    "callback_data": f"txt|{request_id}|wbadge|off",
-                },
-                {
-                    "text": f"On {'✅' if request.get('wbadge') else ''}",
-                    "callback_data": f"txt|{request_id}|wbadge|on",
-                },
+                {"text": f"Off {'✅' if is_off else ''}".strip(), "callback_data": f"txt|{request_id}|woff"},
+                {"text": f"Badge {'✅' if request.get('wbadge') else ''}".strip(), "callback_data": f"txt|{request_id}|wbadge|on"},
+                {"text": f"Overlay {'✅' if request.get('woverlay') else ''}".strip(), "callback_data": f"txt|{request_id}|wover|on"},
+                {"text": "Options", "callback_data": "wx|open"},
             ],
             [{"text": "Pick background:", "callback_data": f"txt|{request_id}|noop"}],
         ]
@@ -420,6 +427,9 @@ class TelegramTextFlow:
     def set_wbadge(self, request, enabled: bool):
         request["wbadge"] = bool(enabled)
 
+    def set_woverlay(self, request, enabled: bool):
+        request["woverlay"] = bool(enabled)
+
     def await_saved(self, request):
         request["awaiting_saved"] = True
 
@@ -566,9 +576,17 @@ class TelegramTextFlow:
         # Optional weather badge overlay
         if request.get("wbadge"):
             try:
-                image = self._overlay_weather_badge(image)
+                image = self.overlay_weather_badge(image)
             except Exception:
                 logger.exception("Failed to overlay weather badge.")
+        # Optional per-request or global full overlay
+        try:
+            opts = self._get_telegram_weather_options()
+            apply_overlay = bool(request.get("woverlay")) or bool(opts.get("weather", {}).get("overlay", {}).get("enabled"))
+            if apply_overlay:
+                image = self.overlay_weather_caption(image)
+        except Exception:
+            logger.exception("Failed to overlay full weather caption.")
         saved_path = self._save_image(image)
         self._display_image(image, final_text)
 
@@ -608,6 +626,13 @@ class TelegramTextFlow:
 
     # --- Weather badge overlay ---------------------------------------------
 
+    def overlay_weather_badge(self, image: Image.Image) -> Image.Image:
+        """Public helper to overlay the weather badge onto an image.
+
+        Returns the original image if weather data is unavailable or invalid.
+        """
+        return self._overlay_weather_badge(image)
+
     def _overlay_weather_badge(self, image: Image.Image) -> Image.Image:
         data = self._fetch_weather_badge_data()
         if not data:
@@ -637,9 +662,22 @@ class TelegramTextFlow:
         bw = padding * 3 + icon_size + tw
         bh = padding * 2 + max(icon_size, th)
 
-        # Position: top-right
-        x1 = max(0, W - padding - bw)
-        y1 = padding
+        # Position from global Telegram weather options (default top-right)
+        pos = (((self._get_telegram_weather_options().get("weather") or {}).get("badge") or {}).get("position") or "tr").lower()
+        if pos not in {"tr", "tl", "br", "bl"}:
+            pos = "tr"
+        if pos == "tr":
+            x1 = max(0, W - padding - bw)
+            y1 = padding
+        elif pos == "tl":
+            x1 = padding
+            y1 = padding
+        elif pos == "br":
+            x1 = max(0, W - padding - bw)
+            y1 = max(0, H - padding - bh)
+        else:  # bl
+            x1 = padding
+            y1 = max(0, H - padding - bh)
         x2 = x1 + bw
         y2 = y1 + bh
         # Background rounded rectangle (semi-opaque)
@@ -665,17 +703,38 @@ class TelegramTextFlow:
         return img.convert("RGB")
 
     def _fetch_weather_badge_data(self):
-        plugin = self._get_weather_plugin()
-        if not plugin:
+        # Use cached fetch to avoid excessive API calls
+        info = self._get_cached_weather()
+        if not info:
             return None
-        plugin_config = self.device_config.get_plugin("weather")
-        if not plugin_config:
+        return {"icon_path": info.get("icon_path"), "temp_text": info.get("temp_text")}
+
+    def _get_cached_weather(self):
+        plugin, settings = self._get_weather_plugin_and_settings()
+        if not plugin or not settings:
             return None
-        settings = plugin_config.get("plugin_settings") or {}
-        provider = settings.get("weatherProvider", "OpenWeatherMap")
-        units = settings.get("units", "metric")
-        lat = settings.get("latitude")
-        lon = settings.get("longitude")
+        provider = (settings.get("weatherProvider") or "OpenWeatherMap").strip()
+        units = (settings.get("units") or "metric").strip()
+        # Validate coordinates early to avoid API errors
+        def _pf(v):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+        lat = _pf(settings.get("latitude"))
+        lon = _pf(settings.get("longitude"))
+        if lat is None or lon is None:
+            return None
+
+        key = f"{provider}|{units}|{lat:.4f}|{lon:.4f}"
+        now = time.time()
+        if (
+            self._weather_cache.get("key") == key
+            and (now - float(self._weather_cache.get("ts", 0))) < self._WEATHER_TTL_SECONDS
+            and self._weather_cache.get("data")
+        ):
+            return self._weather_cache["data"]
+
         try:
             if provider == "OpenWeatherMap":
                 api_key = self.device_config.load_env_key("OPEN_WEATHER_MAP_SECRET")
@@ -684,7 +743,9 @@ class TelegramTextFlow:
                 wd = plugin.get_weather_data(api_key, units, lat, lon)
                 current = wd.get("current", {})
                 temp = current.get("temp")
-                icon_code = (current.get("weather") or [{}])[0].get("icon", "01d").replace("n", "d")
+                wobj = (current.get("weather") or [{}])[0]
+                icon_code = (wobj.get("icon", "01d") or "01d").replace("n", "d")
+                cond_text = (wobj.get("description") or wobj.get("main") or "").strip()
                 icon_path = plugin.get_plugin_dir(f"icons/{icon_code}.png")
             elif provider == "OpenMeteo":
                 wd = plugin.get_open_meteo_data(lat, lon, units, 1)
@@ -695,13 +756,40 @@ class TelegramTextFlow:
                 hour = _dt.now(_tz.utc).hour
                 icon_code = plugin.map_weather_code_to_icon(current.get("weathercode", 0), hour)
                 icon_path = plugin.get_plugin_dir(f"icons/{icon_code}.png")
+                # Minimal condition mapping for Open‑Meteo (WMO codes)
+                wmo = int(current.get("weathercode", 0) or 0)
+                cond_map = {
+                    0: "Clear", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
+                    45: "Fog", 48: "Fog",
+                    51: "Drizzle", 53: "Drizzle", 55: "Drizzle",
+                    56: "Freezing drizzle", 57: "Freezing drizzle",
+                    61: "Rain", 63: "Rain", 65: "Heavy rain",
+                    66: "Freezing rain", 67: "Freezing rain",
+                    71: "Snow", 73: "Snow", 75: "Heavy snow",
+                    77: "Snow grains",
+                    80: "Rain showers", 81: "Rain showers", 82: "Heavy showers",
+                    85: "Snow showers", 86: "Snow showers",
+                    95: "Thunderstorm", 96: "Thunder + hail", 99: "Thunder + hail",
+                }
+                cond_text = cond_map.get(wmo, "")
             else:
                 return None
             unit_symbol = {"metric": "°C", "imperial": "°F", "standard": "K"}.get(units, "°C")
             temp_text = f"{int(round(temp))}{unit_symbol}" if isinstance(temp, (int, float)) else None
-            return {"icon_path": icon_path, "temp_text": temp_text}
+            data = {
+                "icon_path": icon_path,
+                "temp_text": temp_text,
+                "cond_text": cond_text,
+                "provider": provider,
+                "units": units,
+                "lat": lat,
+                "lon": lon,
+                "ts": now,
+            }
+            self._weather_cache.update({"key": key, "ts": now, "data": data})
+            return data
         except Exception:
-            logger.exception("Failed to fetch weather data for badge")
+            logger.exception("Failed to fetch weather data (cached)")
             return None
 
     # --- Saved image helpers -----------------------------------------------
@@ -828,13 +916,11 @@ class TelegramTextFlow:
         return path
 
     def _generate_weather_background(self):
-        plugin = self._get_weather_plugin()
+        plugin, settings = self._get_weather_plugin_and_settings()
         if not plugin:
             raise RuntimeError("Weather plugin is not installed.")
-        plugin_config = self.device_config.get_plugin("weather")
-        if not plugin_config:
+        if not settings:
             raise RuntimeError("Weather plugin is not configured.")
-        settings = plugin_config.get("plugin_settings") or {}
         image = plugin.generate_image(settings, self.device_config)
         filename = datetime.utcnow().strftime("telegram_text_weather_bg_%Y%m%d_%H%M%S.png")
         path = os.path.join(self.storage_dir, filename)
@@ -897,8 +983,158 @@ class TelegramTextFlow:
             return None
         return get_plugin_instance(plugin_config)
 
-    def _get_weather_plugin(self):
-        plugin_config = self.device_config.get_plugin("weather")
-        if not plugin_config:
-            return None
-        return get_plugin_instance(plugin_config)
+    def _get_weather_plugin_and_settings(self):
+        """Return (plugin, settings) for the first configured Weather plugin instance.
+
+        Preference order:
+        - Active playlist (if known), else determined by current time
+        - Fallback to the first playlist containing a weather instance
+        Returns (None, None) if not available.
+        """
+        try:
+            pm = self.device_config.get_playlist_manager()
+            # Determine an active playlist
+            current_dt = (
+                self.refresh_task._get_current_datetime()
+                if hasattr(self.refresh_task, "_get_current_datetime")
+                else datetime.utcnow()
+            )
+            playlist = None
+            if pm.active_playlist:
+                playlist = pm.get_playlist(pm.active_playlist)
+            if not playlist:
+                playlist = pm.determine_active_playlist(current_dt)
+            # Fallback: first playlist with weather
+            candidate_playlists = []
+            if playlist:
+                candidate_playlists.append(playlist)
+            for p in pm.playlists:
+                if p is playlist:
+                    continue
+                candidate_playlists.append(p)
+
+            for p in candidate_playlists:
+                for inst in p.plugins:
+                    if getattr(inst, "plugin_id", None) == "weather":
+                        plugin_config = self.device_config.get_plugin("weather")
+                        if not plugin_config:
+                            return None, None
+                        plugin = get_plugin_instance(plugin_config)
+                        return plugin, getattr(inst, "settings", {})
+        except Exception:
+            logger.exception("Failed to resolve weather plugin instance/settings")
+            return None, None
+        return None, None
+
+    def _get_telegram_weather_options(self):
+        """Return telegram options dict (weather defaults) from device config, with safe defaults."""
+        cfg = self.device_config.get_config("telegram_options", default={}) or {}
+        return cfg
+
+    def overlay_weather_caption(self, image: Image.Image) -> Image.Image:
+        """Overlay a full-width bottom caption with current weather summary.
+
+        Uses same font family as text caption and semi-opaque band.
+        Returns the original image if weather data is not available.
+        """
+        # Reuse badge data for temperature and icon; add basic condition text for OWM
+        plugin, settings = self._get_weather_plugin_and_settings()
+        if not plugin or not settings:
+            return image
+        data = self._fetch_weather_badge_data()
+        if not data:
+            return image
+        temp_text = data.get("temp_text") or ""
+        icon_path = data.get("icon_path")
+
+        # Use cached data to include condition text without extra fetch
+        info = self._get_cached_weather() or {}
+        cond_text = info.get("cond_text")
+        summary_parts = [p for p in [temp_text, (cond_text.title() if isinstance(cond_text, str) and cond_text else None)] if p]
+        summary = " • ".join(summary_parts) if summary_parts else temp_text
+        if not summary:
+            return image
+
+        img = image.convert("RGBA")
+        draw = ImageDraw.Draw(img)
+        W, H = img.size
+        font_path = resolve_path("static/fonts/Jost-SemiBold.ttf")
+        # Initial font size relative to height
+        font_size = max(20, int(H * 0.08))
+        try:
+            font = ImageFont.truetype(font_path, font_size)
+        except Exception:
+            font = ImageFont.load_default()
+        padding_x = int(font_size * 0.6)
+        padding_y = int(font_size * 0.6)
+        icon_size = int(font_size * 1.2)
+
+        # Reduce font size until the text fits width minus icon + paddings
+        def measure(fs):
+            try:
+                f = ImageFont.truetype(font_path, fs)
+            except Exception:
+                f = ImageFont.load_default()
+            bbox = draw.textbbox((0, 0), summary, font=f)
+            return f, max(0, bbox[2]-bbox[0]), max(0, bbox[3]-bbox[1])
+
+        f = font
+        tw, th = draw.textbbox((0,0), summary, font=f)[2:4]
+        available = W - padding_x*3 - icon_size
+        while (tw > available or th > int(H*0.25)) and font_size > 12:
+            font_size -= 2
+            f, tw, th = measure(font_size)
+        font = f
+        bw = W  # full width band
+        bh = th + padding_y*2
+        x1 = 0
+        y1 = H - bh
+        x2 = W
+        y2 = H
+        # Background band
+        try:
+            draw.rectangle((x1, y1, x2, y2), fill=(0,0,0,200))
+        except Exception:
+            draw.rectangle((x1, y1, x2, y2), fill=(0,0,0,200))
+
+        # Icon
+        if icon_path and os.path.exists(icon_path):
+            try:
+                with Image.open(icon_path) as ic:
+                    ic = ic.convert("RGBA").resize((icon_size, icon_size))
+                    icon_y = y1 + (bh - icon_size)//2
+                    img.paste(ic, (x1 + padding_x, icon_y), ic)
+            except Exception:
+                logger.exception("Failed to draw weather overlay icon")
+
+        # Text
+        tx = x1 + padding_x*2 + icon_size
+        ty = y1 + (bh - th)//2
+        draw.text((tx, ty), summary, font=font, fill=(255,255,255,255))
+
+        # Last updated time (right aligned)
+        try:
+            info = self._get_cached_weather() or {}
+            ts = float(info.get("ts") or time.time())
+            tz_str = self.device_config.get_config("timezone", default="UTC")
+            time_fmt = self.device_config.get_config("time_format", default="12h")
+            dt = datetime.fromtimestamp(ts, tz=pytz.timezone(tz_str))
+            if time_fmt == "24h":
+                updated = dt.strftime("Updated %H:%M")
+            else:
+                updated = dt.strftime("Updated %I:%M %p").replace("Updated 0", "Updated ")
+            meta_font_size = max(12, int(font_size * 0.6))
+            try:
+                meta_font = ImageFont.truetype(font_path, meta_font_size)
+            except Exception:
+                meta_font = ImageFont.load_default()
+            mb = draw.textbbox((0,0), updated, font=meta_font)
+            mtw = max(0, mb[2]-mb[0])
+            mth = max(0, mb[3]-mb[1])
+            rx = max(x1 + padding_x, x2 - padding_x - mtw)
+            ry = y1 + (bh - mth)//2
+            draw.text((rx, ry), updated, font=meta_font, fill=(255,255,255,220))
+        except Exception:
+            logger.exception("Failed to draw weather updated time")
+
+        return img.convert("RGB")
