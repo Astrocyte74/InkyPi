@@ -106,6 +106,8 @@ Quick commands:
   - Save Background (Auto) — last `/txt` background if available, else latest background
   - Save Last Background and Text — full composite `/txt` image
 - `/load` — interactive picker to preview, display, or use a saved background
+- `/weather` (`/wx`) — toggle Weather badge vs overlay and pick badge position
+- `/slideshow` — open slideshow controls (filter bg/composite/all, interval, shuffle, weather badge/overlay); `/stop` ends it
 - `/status` — send the latest background image
 
 Setup: add `TELEGRAM_BOT_TOKEN` (and optionally `TELEGRAM_ALLOWED_IDS`) to `.env`, then restart. See `docs/api_keys.md` for details. For Live Weather backgrounds and the Weather Badge overlay, configure the Weather plugin (latitude/longitude, units, and API key).
@@ -140,7 +142,7 @@ With InkyPi running, you can push images from your phone via Telegram:
 4. Send a photo to the bot — the latest image is saved under `mock_display_output/telegram/latest.png`.  
    Use `/status` in chat to have the bot reply with the current preview.  
    Send plain text to open an interactive prompt where you can tweak model, quality, pick a style (None, Randomize, Creative Enhance, Van Gogh, Illustration, or Far Side), and choose colour or black & white palette guidance before generating an AI image.
-   Use `/txt <message>` to launch the Telegram text composer, pick a layout, optionally rewrite the note, and overlay it on a solid colour, the latest display, Live Weather, or an AI background (auto prompt or fully custom prompt via the image controls). You can also toggle a Weather Badge (current temperature + icon) on AI and text images when the Weather plugin is configured.
+   Use `/txt <message>` to launch the Telegram text composer, pick a layout, optionally rewrite the note, and overlay it on a solid colour, the latest display, Live Weather, or an AI background (auto prompt or fully custom prompt via the image controls). You can also toggle a Weather badge vs full overlay (current temperature + icon/summary) and set badge position from the Weather menu (`/weather` or `/wx`) when the Weather plugin is configured. The same weather toggles apply in `/ai`, `/load`, and slideshow controls.
 
 When `TELEGRAM_ALLOWED_IDS` is blank, the bot accepts messages from any chat the bot is added to. For extra safety, add your personal Telegram user ID (or group chat ID) so only those senders can trigger updates.
 
