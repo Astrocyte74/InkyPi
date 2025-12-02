@@ -61,10 +61,11 @@
     <span class="item"><span class="label">Repo:</span><code>cd /home/mcdarby/InkyPi</code></span>
     <span class="item"><span class="label">Codex:</span><code>codex</code></span>
     <span class="item"><span class="label">Web UI:</span><a href="http://inkypi.local" target="_blank">http://inkypi.local</a></span>
-    <span class="item"><span class="label">Logs:</span><code>journalctl -u inkypi.service -f</code></span>
+    <span class="item"><span class="label">Logs:</span><code>journalctl -u inkypi.service -f</code> <small>(alias: <code>logs</code>)</small></span>
     <span class="item"><span class="label">Download:</span><a href="http://inkypi.local/download-logs?hours=4" target="_blank">last 4h</a></span>
     <span class="item"><span class="label">Service:</span><code>sudo systemctl status inkypi.service</code></span>
-    <span class="item"><span class="label">Restart:</span><code>sudo systemctl restart inkypi.service</code></span>
+    <span class="item"><span class="label">Restart:</span><code>sudo systemctl restart inkypi.service</code> <small>(alias: <code>restart</code>)</small></span>
+    <span class="item"><span class="label">Relaunch:</span><code>relaunch</code> <small>(restart + follow logs)</small></span>
     <span class="item"><span class="label">Shutdown:</span><code>sudo shutdown now</code></span>
     <span class="item"><span class="label">APOD test:</span><code>set -a; . /usr/local/inkypi/.env; curl -4 -sS --connect-timeout 5 --max-time 45 "https://api.nasa.gov/planetary/apod?api_key=$NASA_SECRET"; set +a</code></span>
   </div>
