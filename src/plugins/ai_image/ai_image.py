@@ -218,7 +218,9 @@ class AIImage(BasePlugin):
             )
 
         orientation = device_config.get_config("orientation") or "horizontal"
-        aspect_ratio = "1024:1536" if orientation == "vertical" else "1536:1024"
+        # Gemini requires one of a fixed set of aspect ratios.
+        # Use 16:9 / 9:16 to stay close to the existing wide/tall layouts and let the display pipeline resize to panel resolution.
+        aspect_ratio = "9:16" if orientation == "vertical" else "16:9"
 
         logger.info(
             "Generating Gemini image | model=%s | orientation=%s | aspect=%s",
