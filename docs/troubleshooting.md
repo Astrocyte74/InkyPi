@@ -51,7 +51,50 @@ sudo /usr/local/bin/inkypi -d
 
 ## API Key not configured
 
-Some plugins require API Keys to be configured in order to run. These need to be configured in a .env file at the root of the project. See [API Keys](api_keys.md) for details.
+Some plugins require API Keys to be configured in order to run.
+
+- On a Raspberry Pi install (systemd service), store secrets in `/usr/local/inkypi/.env`.
+- In dev mode, you can also use a repo-root `.env` when running `python src/inkypi.py --dev`.
+
+See [API Keys](api_keys.md) for required keys.
+
+### Editing `/usr/local/inkypi/.env`
+
+The service `.env` is typically owned by `root`, so editing it with `nano` as a regular user will show “unwritable”.
+
+- One-off edits: `sudoedit /usr/local/inkypi/.env`
+- Or: `sudo nano /usr/local/inkypi/.env`
+- Reload after changes: `sudo systemctl restart inkypi.service`
+
+### Optional: Edit `.env` without sudo
+
+If you prefer editing without `sudo`, keep the real file somewhere you own (e.g. `~/.config/inkypi/.env`) and symlink the service path to it:
+
+```bash
+mkdir -p ~/.config/inkypi
+touch ~/.config/inkypi/.env
+sudo ln -sf ~/.config/inkypi/.env /usr/local/inkypi/.env
+```
+
+Then edit normally:
+
+```bash
+nano ~/.config/inkypi/.env
+sudo systemctl restart inkypi.service
+```
+
+### Optional: Useful aliases / shortcuts
+
+You can add convenience commands in `~/.bash_aliases`:
+
+```bash
+alias restart='sudo systemctl restart inkypi.service'
+alias logs='journalctl -u inkypi.service -f'
+alias relaunch='sudo systemctl restart inkypi.service && sleep 1 && journalctl -u inkypi.service -f'
+alias envinkypi='nano ~/.config/inkypi/.env'
+```
+
+Reload them with `source ~/.bash_aliases` (or log out/in).
 
 ## Clock/Sunset/Sunrise Time is wrong
 
