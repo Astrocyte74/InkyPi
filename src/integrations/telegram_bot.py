@@ -2018,12 +2018,16 @@ class TelegramBotListener:
 
             self.refresh_task.manual_update(PlaylistRefresh(playlist, plugin_instance, force=True))
 
+            plugin_image_path = os.path.join(
+                self.device_config.plugin_image_dir, plugin_instance.get_image_path()
+            )
+
             suffix = f"(cacheId={cache_id}, day={day_key})"
             if removed:
                 caption = f"🐱 Daily Cat Weather refreshed {suffix}"
             else:
                 caption = f"🐱 Daily Cat Weather refreshed {suffix} (no cache files to clear)"
-            self._send_photo_path(chat_id, self.device_config.current_image_file, caption=caption)
+            self._send_photo_path(chat_id, plugin_image_path, caption=caption)
         except Exception as exc:
             logger.exception("Daily Cat Weather reroll failed: %s", exc)
             self._send_message(chat_id, f"Daily Cat Weather refresh failed: {exc}")

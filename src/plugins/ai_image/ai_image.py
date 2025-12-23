@@ -267,22 +267,34 @@ class AIImage(BasePlugin):
 
         try:
             client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model=image_model,
-                contents=text_prompt,
-                config=genai_types.GenerateContentConfig(
-                    response_modalities=["IMAGE"],
-                    image_config=genai_types.ImageConfig(
-                        aspect_ratio=aspect_ratio,
-                        image_size=image_size,
+            try:
+                response = client.models.generate_content(
+                    model=image_model,
+                    contents=text_prompt,
+                    config=genai_types.GenerateContentConfig(
+                        response_modalities=["IMAGE"],
+                        image_config=genai_types.ImageConfig(
+                            aspect_ratio=aspect_ratio,
+                            image_size=image_size,
+                        ),
                     ),
-                ),
-            )
+                )
+            except Exception as exc:
+                msg = str(exc).upper()
+                if "INVALID_ARGUMENT" not in msg and "400" not in msg:
+                    raise
+                logger.warning("Gemini image_config rejected; retrying without image_config: %s", exc)
+                # Some Gemini image models reject image_config but still support generateContent for images.
+                response = client.models.generate_content(
+                    model=image_model,
+                    contents=text_prompt,
+                    config=genai_types.GenerateContentConfig(response_modalities=["IMAGE"]),
+                )
         except Exception as e:
             logger.exception("Gemini image request failed: %s", e)
-            raise RuntimeError("Gemini image request failure, please check logs.") from e
+            raise RuntimeError(f"Gemini image request failure: {e}") from e
 
-        # Extract inline image bytes
+        image_bytes = None
         try:
             candidate = response.candidates[0]
             image_bytes = next(

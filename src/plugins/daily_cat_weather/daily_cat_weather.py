@@ -476,42 +476,75 @@ class DailyCatWeather(BasePlugin):
 
     @staticmethod
     def _generate_gemini_background(api_key, prompt, model, image_size, aspect_ratio):
+        def _decode_image_bytes(image_bytes):
+            try:
+                return Image.open(BytesIO(image_bytes)).convert("RGB")
+            except Exception as exc:
+                logger.exception("Failed to decode Gemini image bytes: %s", exc)
+                raise RuntimeError("Gemini image decoding failure, please check logs.") from exc
+
+        def _extract_image_bytes_from_generate_content(response):
+            try:
+                candidate = response.candidates[0]
+                return next(
+                    (
+                        part.inline_data.data
+                        for part in candidate.content.parts
+                        if getattr(part, "inline_data", None)
+                    ),
+                    None,
+                )
+            except Exception:
+                logger.exception("Unexpected Gemini response format.")
+                return None
+
+        def _looks_like_invalid_argument(exc):
+            message = str(exc).upper()
+            return "INVALID_ARGUMENT" in message or "400" in message
+
         try:
             client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=genai_types.GenerateContentConfig(
-                    response_modalities=["IMAGE"],
-                    image_config=genai_types.ImageConfig(
-                        aspect_ratio=aspect_ratio,
-                        image_size=image_size,
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=genai_types.GenerateContentConfig(
+                        response_modalities=["IMAGE"],
+                        image_config=genai_types.ImageConfig(
+                            aspect_ratio=aspect_ratio,
+                            image_size=image_size,
+                        ),
                     ),
-                ),
-            )
+                )
+            except Exception as exc:
+                logger.warning("Gemini image_config rejected; retrying without image_config: %s", exc)
+                if not _looks_like_invalid_argument(exc):
+                    raise
+
+                # Some Gemini image models reject image_config but still support generateContent for images.
+                # Retry with a minimal config and let Gemini pick the output size.
+                try:
+                    response = client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=genai_types.GenerateContentConfig(response_modalities=["IMAGE"]),
+                    )
+                except Exception as exc2:
+                    logger.exception("Gemini generate_content retry failed (minimal IMAGE): %s", exc2)
+                    # Final retry: include TEXT modality in case the model requires it.
+                    response = client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=genai_types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
+                    )
         except Exception as exc:
             logger.exception("Gemini request failed: %s", exc)
-            raise RuntimeError("Gemini image request failure, please check logs.") from exc
+            raise RuntimeError(f"Gemini image request failure: {exc}") from exc
 
         image_bytes = None
-        try:
-            candidate = response.candidates[0]
-            image_bytes = next(
-                (
-                    part.inline_data.data
-                    for part in candidate.content.parts
-                    if getattr(part, "inline_data", None)
-                ),
-                None,
-            )
-        except Exception:
-            logger.exception("Unexpected Gemini response format.")
+        image_bytes = _extract_image_bytes_from_generate_content(response)
 
         if not image_bytes:
             raise RuntimeError("Gemini returned no image data.")
 
-        try:
-            return Image.open(BytesIO(image_bytes)).convert("RGB")
-        except Exception as exc:
-            logger.exception("Failed to decode Gemini image bytes: %s", exc)
-            raise RuntimeError("Gemini image decoding failure, please check logs.") from exc
+        return _decode_image_bytes(image_bytes)
