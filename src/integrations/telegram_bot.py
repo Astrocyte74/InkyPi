@@ -326,7 +326,9 @@ class TelegramBotListener:
         elif text.lower().startswith("/weather") or text.lower().startswith("/wx"):
             self._send_weather_menu(chat_id)
         elif text.lower().startswith("/cat") or text.lower().startswith("/reroll"):
-            self._reroll_daily_cat(chat_id)
+            parts = text.split(maxsplit=1)
+            user_prompt = parts[1].strip() if len(parts) > 1 else None
+            self._reroll_daily_cat(chat_id, user_prompt=user_prompt)
         elif text.lower().startswith("/slideshow"):
             self._handle_slideshow_command(text, chat_id)
         elif text.lower().strip() == "/stop":
@@ -1845,6 +1847,8 @@ class TelegramBotListener:
             "- /txt a short note — generate a note (pick a background, then Render).",
             "- /status — send the latest background preview.",
             "- /cat — regenerate today’s Daily Cat Weather background (if configured).",
+            "- /cat <prompt> — set a custom scene for the rest of today (auto-enhanced).",
+            "- /cat clear — go back to the auto scene generator.",
             "",
             "AI image (/ai):",
             "- /ai <prompt> — opens the image generator with buttons for Model/Quality/Style/Palette.",
@@ -1981,21 +1985,84 @@ class TelegramBotListener:
 
         return cache_id, day_key, removed
 
-    def _reroll_daily_cat(self, chat_id):
+    def _get_openrouter_api_key(self):
+        for key_name in ("OPEN_ROUTER_SECRET", "OPEN_ROUTER_API_KEY", "OPENROUTER_API_KEY"):
+            value = (self.device_config.load_env_key(key_name) or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _build_openrouter_prompt_client(self):
+        api_key = self._get_openrouter_api_key()
+        if not api_key:
+            return None
+
+        try:
+            from plugins.ai_image.ai_image import AIImage  # local import to keep startup light
+        except Exception:
+            logger.exception("Failed to import AIImage helper; prompt enhancement disabled.")
+            return None
+
+        return {
+            "type": "openrouter",
+            "api_key": api_key,
+            "model": AIImage._resolve_openrouter_model(self.device_config.load_env_key("OPEN_ROUTER_MODEL")),
+            "referer": self.device_config.load_env_key("OPEN_ROUTER_REFERRER") or "https://github.com/fatihak/InkyPi",
+            "title": self.device_config.load_env_key("OPEN_ROUTER_TITLE") or "InkyPi",
+        }
+
+    def _enhance_daily_cat_user_prompt(self, user_prompt):
+        if not user_prompt or not user_prompt.strip():
+            return user_prompt
+
+        prompt_client = self._build_openrouter_prompt_client()
+        if not prompt_client:
+            return user_prompt
+
+        try:
+            from plugins.ai_image.ai_image import AIImage  # local import for consistency
+        except Exception:
+            logger.exception("Failed to import AIImage helper; prompt enhancement disabled.")
+            return user_prompt
+
+        system_content = (
+            "You rewrite user ideas into a single strong image-generation prompt for a children's book illustration. "
+            "Preserve the core idea and keep it playful and imaginative. Always include: "
+            "a larger-than-average (but not obese) orange-and-white cat (ginger tabby with a white chest and paws). "
+            "No text, no captions, no speech bubbles. Not photorealistic. Full-bleed scene. "
+            "Add composition, setting, mood, and a few concrete visual details without introducing new main subjects. "
+            "Keep under 60 words. Return only the refined prompt."
+        )
+        user_content = f"User idea: \"{user_prompt.strip()}\""
+
+        try:
+            refined = AIImage._call_prompt_service(prompt_client, system_content, user_content, temperature=0.8)
+            return (refined or user_prompt).strip()
+        except Exception:
+            logger.exception("Daily cat prompt enhancement failed; using raw prompt.")
+            return user_prompt
+
+    def _reroll_daily_cat(self, chat_id, user_prompt=None):
         if chat_id in self.pending_cat_reroll:
             self._send_message(chat_id, "Already refreshing the Daily Cat Weather image…")
             return
 
         self.pending_cat_reroll.add(chat_id)
-        self._send_message(chat_id, "Refreshing Daily Cat Weather…")
+        if user_prompt:
+            if user_prompt.strip().lower() in {"clear", "off", "auto", "default"}:
+                self._send_message(chat_id, "Clearing custom Daily Cat prompt and regenerating…")
+            else:
+                self._send_message(chat_id, "Setting a custom Daily Cat prompt and regenerating…")
+        else:
+            self._send_message(chat_id, "Refreshing Daily Cat Weather…")
         threading.Thread(
             target=self._reroll_daily_cat_worker,
-            args=(chat_id,),
+            args=(chat_id, user_prompt),
             name=f"TelegramCatReroll-{chat_id}",
             daemon=True,
         ).start()
 
-    def _reroll_daily_cat_worker(self, chat_id):
+    def _reroll_daily_cat_worker(self, chat_id, user_prompt=None):
         try:
             current_dt = (
                 self.refresh_task._get_current_datetime()
@@ -2018,6 +2085,22 @@ class TelegramBotListener:
             plugin_instance.settings = plugin_instance.settings or {}
             plugin_instance.settings["rerollNonce"] = current_nonce + 1
 
+            # Optional: set a custom prompt for the rest of the day (based on the plugin's dailyRefreshTime rollover).
+            if user_prompt and user_prompt.strip():
+                cmd = user_prompt.strip()
+                cmd_lower = cmd.lower()
+
+                if cmd_lower in {"clear", "off", "auto", "default"}:
+                    for key_name in ("customPrompt", "customPromptEnhanced", "customPromptDayKey"):
+                        plugin_instance.settings.pop(key_name, None)
+                else:
+                    daily_refresh_time = self._parse_hhmm(plugin_instance.settings.get("dailyRefreshTime") or "04:00")
+                    day_key = self._day_key(current_dt, daily_refresh_time)
+                    enhanced = self._enhance_daily_cat_user_prompt(cmd)
+                    plugin_instance.settings["customPrompt"] = cmd
+                    plugin_instance.settings["customPromptEnhanced"] = enhanced
+                    plugin_instance.settings["customPromptDayKey"] = day_key
+
             cache_id, day_key, removed = self._clear_daily_cat_cache(plugin_instance, current_dt)
 
             if not getattr(self.refresh_task, "running", False):
@@ -2030,7 +2113,8 @@ class TelegramBotListener:
                 self.device_config.plugin_image_dir, plugin_instance.get_image_path()
             )
 
-            suffix = f"(cacheId={cache_id}, day={day_key}, reroll={plugin_instance.settings.get('rerollNonce')})"
+            mode = "custom" if (plugin_instance.settings.get("customPromptDayKey") == day_key and plugin_instance.settings.get("customPromptEnhanced")) else "auto"
+            suffix = f"(mode={mode}, cacheId={cache_id}, day={day_key}, reroll={plugin_instance.settings.get('rerollNonce')})"
             if removed:
                 caption = f"🐱 Daily Cat Weather refreshed {suffix}"
             else:

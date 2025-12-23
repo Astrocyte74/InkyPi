@@ -29,6 +29,8 @@ See `docs/api_keys.md` for `.env` setup.
 ## Telegram Reroll
 
 - Run `/cat` (or tap `🐱 New Daily Cat` from `/help`) to delete today’s cached background and force a regenerate on the next refresh.
+- Run `/cat <your idea>` to set a custom scene for the rest of today (until the next `New Image Time` rollover); the idea is auto-enhanced before generating.
+- Run `/cat clear` to return to the auto scene generator.
 
 ## Cache Location
 

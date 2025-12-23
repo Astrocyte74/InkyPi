@@ -130,22 +130,35 @@ class DailyCatWeather(BasePlugin):
         cache_dir = self._cache_dir(device_config)
         os.makedirs(cache_dir, exist_ok=True)
 
+        custom_prompt_day_key = (settings.get("customPromptDayKey") or "").strip()
+        custom_prompt_raw = (settings.get("customPrompt") or "").strip()
+        custom_prompt_enhanced = (settings.get("customPromptEnhanced") or "").strip()
+        active_custom_prompt = (
+            (custom_prompt_enhanced or custom_prompt_raw) if custom_prompt_day_key == day_key else ""
+        )
+
         bg_path = os.path.join(cache_dir, f"bg_{cache_id}_{day_key}.png")
         meta_path = os.path.join(cache_dir, f"bg_{cache_id}_{day_key}.json")
         latest_link = os.path.join(cache_dir, f"latest_bg_{cache_id}.png")
 
-        fingerprint = self._settings_fingerprint(
-            {
-                "lat": lat,
-                "lon": lon,
-                "units": units,
-                "model": model,
-                "image_size": image_size,
-                "daily_refresh_time": daily_refresh_time.strftime("%H:%M"),
-                "reroll_nonce": reroll_nonce,
-                "prompt_version": PROMPT_VERSION,
-            }
-        )
+        fingerprint_values = {
+            "lat": lat,
+            "lon": lon,
+            "units": units,
+            "model": model,
+            "image_size": image_size,
+            "daily_refresh_time": daily_refresh_time.strftime("%H:%M"),
+            "reroll_nonce": reroll_nonce,
+            "prompt_version": PROMPT_VERSION,
+        }
+        if active_custom_prompt:
+            fingerprint_values.update(
+                {
+                    "custom_prompt_day_key": custom_prompt_day_key,
+                    "custom_prompt_hash": hashlib.sha256(active_custom_prompt.encode("utf-8")).hexdigest(),
+                }
+            )
+        fingerprint = self._settings_fingerprint(fingerprint_values)
 
         dimensions = device_config.get_resolution()
         if device_config.get_config("orientation") == "vertical":
@@ -168,7 +181,14 @@ class DailyCatWeather(BasePlugin):
             logger.exception("Failed to fetch weather; continuing without overlay.")
 
         if background is None:
-            prompt = self._build_prompt(weather, reroll_nonce=reroll_nonce, cache_id=cache_id, day_key=day_key)
+            if active_custom_prompt:
+                prompt = self._build_custom_prompt(
+                    weather,
+                    active_custom_prompt,
+                    reroll_nonce=reroll_nonce,
+                )
+            else:
+                prompt = self._build_prompt(weather, reroll_nonce=reroll_nonce, cache_id=cache_id, day_key=day_key)
             background = self._generate_gemini_background(
                 api_key=gemini_key,
                 prompt=prompt,
@@ -198,6 +218,9 @@ class DailyCatWeather(BasePlugin):
                     ),
                     "reroll_nonce": reroll_nonce,
                     "prompt_version": PROMPT_VERSION,
+                    "custom_prompt": active_custom_prompt,
+                    "custom_prompt_raw": custom_prompt_raw,
+                    "custom_prompt_day_key": custom_prompt_day_key,
                 },
             )
             try:
@@ -309,6 +332,38 @@ class DailyCatWeather(BasePlugin):
             f"{constraints}"
             "Encourage creativity: pick an original setting and mission; avoid repeating the same scene across rerolls. "
             f"The cat is {activity}{accessories}. "
+            f"Variant id: {reroll_nonce}. "
+            f"{SPECTRA6_INSTRUCTIONS}"
+        )
+
+    def _build_custom_prompt(self, weather, user_prompt, reroll_nonce=0):
+        base = (
+            "Children's book illustration of an ambitious cat on a wholesome daily mission. "
+            f"Main character: {DEFAULT_CAT_DESCRIPTION}. "
+            "Keep it lighthearted and amusing, with a whimsical storybook vibe (not photorealistic). "
+            "No text, no captions, no speech bubbles. "
+        )
+
+        weather_line = ""
+        temp_c = None
+        if weather:
+            temp_c = self._to_celsius(weather.current_temp, weather.units)
+            weather_line = f"Today's weather: {weather.description} (about {temp_c:.0f}°C). "
+
+        constraints = ""
+        mild = temp_c is not None and temp_c >= 8
+        if mild:
+            prompt_lower = user_prompt.lower()
+            if "fireplace" not in prompt_lower and "indoors" not in prompt_lower and "inside" not in prompt_lower:
+                constraints = "Prefer an outdoor daylight setting (no fireplace / cozy indoor scenes). "
+
+        return (
+            f"{base}"
+            f"{weather_line}"
+            f"{constraints}"
+            "Use the following scene idea as the main direction (you may add small visual details, but do not add new main subjects): "
+            f"{user_prompt}. "
+            "Full-bleed scene, no borders. "
             f"Variant id: {reroll_nonce}. "
             f"{SPECTRA6_INSTRUCTIONS}"
         )
