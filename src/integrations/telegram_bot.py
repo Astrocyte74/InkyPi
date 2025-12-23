@@ -118,6 +118,7 @@ class TelegramBotListener:
         self.text_flow = TelegramTextFlow(self.device_config, self.display_manager, self.refresh_task, self.storage_dir)
         self.pending_save = {}
         self.pending_txt_bg = {}
+        self.pending_help_prompt = {}
         self.load_filters = {}
         self.load_wx = {}
         self.wx_menu_ids = {}
@@ -245,6 +246,14 @@ class TelegramBotListener:
                     "reply_markup": json.dumps(markup),
                 },
             )
+            return
+
+        pending_help = self.pending_help_prompt.pop(chat_id, None)
+        if pending_help and not text.startswith("/"):
+            if pending_help == "ai":
+                self._init_ai_prompt(chat_id, text)
+            elif pending_help == "txt":
+                self._init_text_prompt(chat_id, text)
             return
 
         if text.lower() in {"/start", "/help"}:
@@ -457,6 +466,73 @@ class TelegramBotListener:
             return
 
         flow_type = parts[0]
+        if flow_type == "help":
+            action = parts[1] if len(parts) > 1 else None
+            chat_id = callback_query.get("message", {}).get("chat", {}).get("id")
+            message_id = callback_query.get("message", {}).get("message_id")
+
+            if not chat_id:
+                self._answer_callback(callback_query["id"])
+                return
+
+            if action == "status":
+                self._send_status(chat_id)
+                self._answer_callback(callback_query["id"])
+            elif action == "ai":
+                self.pending_help_prompt[chat_id] = "ai"
+                self._api_post(
+                    "sendMessage",
+                    data={
+                        "chat_id": chat_id,
+                        "text": "Send an AI image prompt (or run `/ai <prompt>`).",
+                        "reply_markup": json.dumps(
+                            {"force_reply": True, "input_field_placeholder": "AI prompt"}
+                        ),
+                    },
+                )
+                self._answer_callback(callback_query["id"], text="Send a prompt…")
+            elif action == "txt":
+                self.pending_help_prompt[chat_id] = "txt"
+                self._api_post(
+                    "sendMessage",
+                    data={
+                        "chat_id": chat_id,
+                        "text": "Send a short note (or run `/txt <message>`).",
+                        "reply_markup": json.dumps(
+                            {"force_reply": True, "input_field_placeholder": "Note text"}
+                        ),
+                    },
+                )
+                self._answer_callback(callback_query["id"], text="Send a note…")
+            elif action == "save":
+                self._send_save_menu(chat_id)
+                self._answer_callback(callback_query["id"])
+            elif action == "load":
+                self._send_load_menu(chat_id)
+                self._answer_callback(callback_query["id"])
+            elif action == "weather":
+                self._send_weather_menu(chat_id)
+                self._answer_callback(callback_query["id"])
+            elif action == "slideshow":
+                self._send_slideshow_menu(chat_id)
+                self._answer_callback(callback_query["id"])
+            elif action == "close" and message_id:
+                try:
+                    self._api_post(
+                        "editMessageReplyMarkup",
+                        data={
+                            "chat_id": chat_id,
+                            "message_id": message_id,
+                            "reply_markup": json.dumps({"inline_keyboard": []}),
+                        },
+                    )
+                except Exception:
+                    logger.exception("Failed to close help menu.")
+                self._answer_callback(callback_query["id"])
+            else:
+                self._answer_callback(callback_query["id"])
+            return
+
         if flow_type == "ai":
             if len(parts) < 3:
                 self._answer_callback(callback_query["id"])
@@ -1787,7 +1863,34 @@ class TelegramBotListener:
             "- /slideshow start [all|bg|composite] [interval=N] [shuffle=on|off] [weather=off|badge|overlay]",
             "- /slideshow stop (or /stop)",
         ]
-        self._send_message(chat_id, "\n".join(lines))
+        markup = {
+            "inline_keyboard": [
+                [
+                    {"text": "🖼 Status", "callback_data": "help|status"},
+                    {"text": "🤖 AI Image", "callback_data": "help|ai"},
+                    {"text": "📝 Text", "callback_data": "help|txt"},
+                ],
+                [
+                    {"text": "💾 Save", "callback_data": "help|save"},
+                    {"text": "📂 Load", "callback_data": "help|load"},
+                ],
+                [
+                    {"text": "🌦 Weather", "callback_data": "help|weather"},
+                    {"text": "🎞 Slideshow", "callback_data": "help|slideshow"},
+                ],
+                [
+                    {"text": "✖️ Close", "callback_data": "help|close"},
+                ],
+            ]
+        }
+        self._api_post(
+            "sendMessage",
+            data={
+                "chat_id": chat_id,
+                "text": "\n".join(lines),
+                "reply_markup": json.dumps(markup),
+            },
+        )
 
     def _send_save_menu(self, chat_id):
         text = (
