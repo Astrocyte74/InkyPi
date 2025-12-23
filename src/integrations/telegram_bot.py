@@ -3,6 +3,7 @@ import os
 import threading
 import time
 import logging
+import re
 from datetime import datetime
 from io import BytesIO
 import shutil
@@ -64,6 +65,19 @@ class TelegramBotListener:
         "spectra6": "Colour",
         "bw": "Black & White",
     }
+
+    @staticmethod
+    def _resolve_default_model(env_value, model_values, fallback):
+        """Resolve TELEGRAM_AI_DEFAULT_MODEL which may contain a comma/space-separated list."""
+        if not env_value:
+            return fallback
+
+        candidates = [token for token in re.split(r"[,\\s]+", env_value.strip()) if token]
+        if not candidates:
+            return fallback
+
+        selected = candidates[0]
+        return selected if selected in model_values else fallback
 
     def _style_button(self, request_id, request, style_value):
         base_label = self.STYLE_LABELS.get(style_value, style_value.capitalize())
@@ -1234,12 +1248,12 @@ class TelegramBotListener:
 
         request_id = f"{chat_id}:{int(time.time()*1000)}"
         model_values = [m[0] for m in self.AI_MODELS]
-        model = (
-            (self.device_config.load_env_key("TELEGRAM_AI_DEFAULT_MODEL") or "").strip()
-            or self.AI_MODELS[0][0]
+        fallback_model = self.AI_MODELS[0][0]
+        model = self._resolve_default_model(
+            self.device_config.load_env_key("TELEGRAM_AI_DEFAULT_MODEL"),
+            model_values,
+            fallback=fallback_model,
         )
-        if model not in model_values:
-            model = self.AI_MODELS[0][0]
         quality = self.QUALITY_OPTIONS[model][0]
         request = {
             "id": request_id,

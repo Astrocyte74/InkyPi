@@ -126,5 +126,5 @@ Optional for using Gemini as an additional image backend in the AI Image plugin 
 Optional Telegram default (uses the model ID):
 
 ```
-TELEGRAM_AI_DEFAULT_MODEL=gemini-2.5-flash-image
+TELEGRAM_AI_DEFAULT_MODEL=gemini-2.5-flash-image, gemini-3-pro-image-preview
 ```
