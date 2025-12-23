@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import re
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
@@ -55,6 +56,11 @@ GEMINI_IMAGE_CONFIG_UNSUPPORTED_MODELS = {
     "models/gemini-2.5-flash-image",
     "models/gemini-3-pro-image-preview",
 }
+
+PROMPT_VERSION = 2
+DEFAULT_CAT_DESCRIPTION = (
+    "a larger-than-average (but not obese) orange-and-white cat (ginger tabby with a white chest and paws)"
+)
 
 
 @dataclass(frozen=True)
@@ -114,6 +120,7 @@ class DailyCatWeather(BasePlugin):
 
         cache_id = self._sanitize_cache_id(settings.get("cacheId") or "default")
         daily_refresh_time = self._parse_hhmm(settings.get("dailyRefreshTime") or "04:00")
+        reroll_nonce = int(settings.get("rerollNonce") or 0)
 
         tz_str = device_config.get_config("timezone", default="UTC")
         tz = pytz.timezone(tz_str)
@@ -135,6 +142,8 @@ class DailyCatWeather(BasePlugin):
                 "model": model,
                 "image_size": image_size,
                 "daily_refresh_time": daily_refresh_time.strftime("%H:%M"),
+                "reroll_nonce": reroll_nonce,
+                "prompt_version": PROMPT_VERSION,
             }
         )
 
@@ -159,7 +168,7 @@ class DailyCatWeather(BasePlugin):
             logger.exception("Failed to fetch weather; continuing without overlay.")
 
         if background is None:
-            prompt = self._build_prompt(weather)
+            prompt = self._build_prompt(weather, reroll_nonce=reroll_nonce, cache_id=cache_id, day_key=day_key)
             background = self._generate_gemini_background(
                 api_key=gemini_key,
                 prompt=prompt,
@@ -187,6 +196,8 @@ class DailyCatWeather(BasePlugin):
                         if weather
                         else {}
                     ),
+                    "reroll_nonce": reroll_nonce,
+                    "prompt_version": PROMPT_VERSION,
                 },
             )
             try:
@@ -214,7 +225,7 @@ class DailyCatWeather(BasePlugin):
     @staticmethod
     def _parse_hhmm(value):
         value = (value or "").strip()
-        match = re.fullmatch(r"(\\d{1,2}):(\\d{2})", value)
+        match = re.fullmatch(r"(\d{1,2}):(\d{2})", value)
         if not match:
             return time(4, 0)
         hour = int(match.group(1))
@@ -268,28 +279,37 @@ class DailyCatWeather(BasePlugin):
             daily=daily,
         )
 
-    def _build_prompt(self, weather):
+    def _build_prompt(self, weather, reroll_nonce=0, cache_id="default", day_key=""):
         base = (
             "Children's book illustration of an ambitious cat on a wholesome daily mission. "
-            "Keep it lighthearted and amusing, with a cozy storybook vibe. "
+            f"Main character: {DEFAULT_CAT_DESCRIPTION}. "
+            "Keep it lighthearted and amusing, with a whimsical storybook vibe (not photorealistic). "
             "No text, no captions, no speech bubbles. "
         )
 
         if not weather:
             return (
                 f"{base}"
-                "The cat is going on a cheerful neighborhood adventure to help a friend. "
+                "Choose a fresh, creative mission for the cat and an interesting setting. "
                 f"{SPECTRA6_INSTRUCTIONS}"
             )
 
         temp_c = self._to_celsius(weather.current_temp, weather.units)
         day_desc = weather.description.lower()
-        activity, accessories = self._pick_activity(temp_c, day_desc, weather.daily)
+        activity, accessories, constraints = self._pick_activity(
+            temp_c,
+            day_desc,
+            weather.daily,
+            seed=f"{cache_id}|{day_key}|{reroll_nonce}|{day_desc}|{round(temp_c)}",
+        )
 
         return (
             f"{base}"
-            f"The scene matches today's weather: {weather.description}. "
+            f"The scene matches today's weather: {weather.description} (about {temp_c:.0f}°C). "
+            f"{constraints}"
+            "Encourage creativity: pick an original setting and mission; avoid repeating the same scene across rerolls. "
             f"The cat is {activity}{accessories}. "
+            f"Variant id: {reroll_nonce}. "
             f"{SPECTRA6_INSTRUCTIONS}"
         )
 
@@ -302,8 +322,9 @@ class DailyCatWeather(BasePlugin):
         return value
 
     @staticmethod
-    def _pick_activity(temp_c, description, daily):
+    def _pick_activity(temp_c, description, daily, seed=""):
         description = description or ""
+        rng = random.Random(seed)
 
         pop = 0.0
         if daily and isinstance(daily, list) and daily[0]:
@@ -312,25 +333,75 @@ class DailyCatWeather(BasePlugin):
             except (TypeError, ValueError):
                 pop = 0.0
 
-        precip_hint = ""
+        accessories_rain = ""
         if pop >= 0.6:
-            precip_hint = " with a tiny umbrella and rain boots"
+            accessories_rain = " with a tiny umbrella and rain boots"
+
+        constraints = ""
+        if temp_c >= 8 and "snow" not in description:
+            constraints = "Do not include a fireplace or indoor cozy scene; prefer an outdoor daylight setting. "
 
         if "snow" in description or "blizzard" in description:
-            return "building a tiny snow fort and planning a daring expedition", " wearing a scarf and mittens"
+            choices = [
+                ("building a tiny snow fort and planning a daring expedition", " wearing a scarf and mittens"),
+                ("sledding down a small hill like a brave explorer", " wearing a warm beanie and mittens"),
+                ("helping build a snowcat sculpture for the neighborhood", " bundled up with earmuffs"),
+            ]
+            activity, accessories = rng.choice(choices)
+            return activity, accessories, "Snowy conditions: bundle the cat up in winter gear. "
         if "rain" in description or "drizzle" in description or "storm" in description:
-            return "puddle-jumping heroically on the way to deliver a letter", precip_hint
+            choices = [
+                ("puddle-jumping heroically on the way to deliver a letter", accessories_rain),
+                ("sailing a leaf-boat flotilla down a little stream", accessories_rain),
+                ("rescuing a tiny lost toy from the rain", accessories_rain),
+            ]
+            activity, accessories = rng.choice(choices)
+            return activity, accessories, "Rainy conditions: give the cat rain gear. "
         if "fog" in description or "mist" in description or "haze" in description:
-            return "navigating with a little compass like an explorer", " with an explorer hat"
+            choices = [
+                ("navigating with a little compass like an explorer", " with an explorer hat"),
+                ("following a treasure map through a misty garden maze", " carrying a tiny lantern"),
+                ("acting as a brave 'lighthouse keeper' for lost friends", " holding a lantern"),
+            ]
+            activity, accessories = rng.choice(choices)
+            return activity, accessories, "Low visibility: use a lantern/compass vibe and strong silhouettes. "
 
         if temp_c <= -10:
-            return "warming up by the fireplace after a brave outdoor patrol", " wrapped in a blanket like a cape"
+            choices = [
+                ("checking on neighbors with a heroic winter patrol", " wrapped in a blanket like a cape"),
+                ("delivering a tiny thermos of cocoa to a friend", " wearing a puffy jacket and scarf"),
+                ("building a windbreak fort and planting a little flag on the hilltop", " wearing a scarf"),
+            ]
+            activity, accessories = rng.choice(choices)
+            return activity, accessories, "Very cold: show winter clothing and cold air. "
         if temp_c <= 0:
-            return "ice skating very carefully while fully bundled up", " wearing earmuffs and a puffy jacket"
+            choices = [
+                ("ice skating very carefully while fully bundled up", " wearing earmuffs and a puffy jacket"),
+                ("making a 'hot cocoa delivery' run with a little satchel", " wearing a scarf"),
+                ("trying snowshoe steps with homemade paw 'skis'", " bundled up with a beanie"),
+            ]
+            activity, accessories = rng.choice(choices)
+            return activity, accessories, "Cold: bundle up the cat in warm clothing. "
         if temp_c >= 28:
-            return "leading a garden watering mission and chasing sunbeams", " wearing sunglasses"
+            choices = [
+                ("leading a garden watering mission and chasing sunbeams", " wearing sunglasses"),
+                ("running a lemonade stand for animal friends", " wearing a sunhat"),
+                ("building a tiny shaded 'cool-down station' with a fan", " holding a cold drink"),
+            ]
+            activity, accessories = rng.choice(choices)
+            return activity, accessories, "Hot weather: bright sunlight, shade, and cool drinks. "
 
-        return "going on a cheerful neighborhood adventure to help a friend", ""
+        choices = [
+            ("going on a cheerful neighborhood adventure to help a friend", ""),
+            ("building a tiny birdhouse workshop and doing careful 'construction'", " with a little tool belt"),
+            ("hosting a mini picnic and sharing snacks with animal friends", " carrying a picnic basket"),
+            ("painting a cheerful mural on a fence with a little brush", " holding a paintbrush"),
+            ("collecting leaves and flowers for a 'nature museum' exhibit", " carrying a little basket"),
+            ("flying a kite on a breezy hill like a proud adventurer", " holding a kite string"),
+            ("setting up a sidewalk 'library cart' and handing out stories", " pushing a tiny cart"),
+        ]
+        activity, accessories = rng.choice(choices)
+        return activity, accessories, constraints
 
     def _render_weather_overlay(self, weather, tz, forecast_days, dimensions):
         width, height = dimensions

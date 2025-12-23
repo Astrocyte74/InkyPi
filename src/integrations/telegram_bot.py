@@ -2010,6 +2010,14 @@ class TelegramBotListener:
                 )
                 return
 
+            # Bump a nonce so rerolls naturally vary even when the weather is similar.
+            try:
+                current_nonce = int((plugin_instance.settings or {}).get("rerollNonce") or 0)
+            except (TypeError, ValueError):
+                current_nonce = 0
+            plugin_instance.settings = plugin_instance.settings or {}
+            plugin_instance.settings["rerollNonce"] = current_nonce + 1
+
             cache_id, day_key, removed = self._clear_daily_cat_cache(plugin_instance, current_dt)
 
             if not getattr(self.refresh_task, "running", False):
@@ -2022,7 +2030,7 @@ class TelegramBotListener:
                 self.device_config.plugin_image_dir, plugin_instance.get_image_path()
             )
 
-            suffix = f"(cacheId={cache_id}, day={day_key})"
+            suffix = f"(cacheId={cache_id}, day={day_key}, reroll={plugin_instance.settings.get('rerollNonce')})"
             if removed:
                 caption = f"🐱 Daily Cat Weather refreshed {suffix}"
             else:
