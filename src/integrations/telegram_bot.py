@@ -1752,6 +1752,7 @@ class TelegramBotListener:
         self._api_post("sendPhoto", data=data, files=files)
 
     def _send_help(self, chat_id):
+        model_labels = ", ".join(label for _, label in self.AI_MODELS)
         lines = [
             "InkyPi Telegram Controls",
             "",
@@ -1762,6 +1763,8 @@ class TelegramBotListener:
             "AI Image:",
             "- /ai <prompt> — open image generator.",
             "  Configure Model, Quality, Style, Palette; then Generate.",
+            f"  Models: {model_labels}. (Gemini requires GEMINI_API_KEY)",
+            "  Default model can be set with TELEGRAM_AI_DEFAULT_MODEL (list supported; first entry wins).",
             "  Use the Weather row to toggle Off/Badge/Overlay and open Weather options.",
             "",
             "Text Composer:",
