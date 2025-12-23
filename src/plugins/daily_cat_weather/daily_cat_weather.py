@@ -333,6 +333,9 @@ class DailyCatWeather(BasePlugin):
             "Encourage creativity: pick an original setting and mission; avoid repeating the same scene across rerolls. "
             f"The cat is {activity}{accessories}. "
             f"Variant id: {reroll_nonce}. "
+            "Composition guidance: keep the main story action and characters in the middle/upper part of the frame. "
+            "Leave the bottom ~25% as a simpler area (sky/ground/blanket/table/floor) with no critical details, "
+            "so a forecast panel can overlay there. Also keep the top-left corner uncluttered for a small weather badge. "
             f"{SPECTRA6_INSTRUCTIONS}"
         )
 
@@ -365,6 +368,9 @@ class DailyCatWeather(BasePlugin):
             f"{user_prompt}. "
             "Full-bleed scene, no borders. "
             f"Variant id: {reroll_nonce}. "
+            "Composition guidance: keep the main story action and characters in the middle/upper part of the frame. "
+            "Leave the bottom ~25% as a simpler area (background/ground/floor/table) with no critical details, "
+            "so a forecast panel can overlay there. Also keep the top-left corner uncluttered for a small weather badge. "
             f"{SPECTRA6_INSTRUCTIONS}"
         )
 
@@ -463,16 +469,16 @@ class DailyCatWeather(BasePlugin):
         overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
 
-        pad = max(10, int(width * 0.02))
-        badge_h = max(72, int(height * 0.16))
-        badge_w = max(250, int(width * 0.34))
-        bar_h = max(110, int(height * 0.24))
+        pad = max(8, int(width * 0.018))
+        badge_h = max(64, int(height * 0.14))
+        badge_w = max(220, int(width * 0.30))
+        bar_h = max(92, int(height * 0.18))
 
         badge_box = (pad, pad, pad + badge_w, pad + badge_h)
         bar_box = (pad, height - pad - bar_h, width - pad, height - pad)
 
-        self._rounded(draw, badge_box, fill=(255, 255, 255, 235), radius=16)
-        self._rounded(draw, bar_box, fill=(255, 255, 255, 235), radius=18)
+        self._rounded(draw, badge_box, fill=(255, 255, 255, 220), radius=14)
+        self._rounded(draw, bar_box, fill=(255, 255, 255, 220), radius=16)
 
         icon_path = self._weather_icon_path(weather.icon)
         icon_img = self._load_icon(icon_path, size=int(badge_h * 0.75))
@@ -514,17 +520,14 @@ class DailyCatWeather(BasePlugin):
         width = x1 - x0
         height = y1 - y0
 
-        title_font = self._font("Jost", int(height * 0.16))
         day_font = self._font("Jost", int(height * 0.18), bold=True)
         temp_font = self._font("Jost", int(height * 0.17))
         pop_font = self._font("Jost", int(height * 0.15))
 
-        draw.text((x0 + pad, y0 + int(pad * 0.3)), f"Next {forecast_days} days", fill=(0, 0, 0, 255), font=title_font)
-
         daily = weather.daily[1 : 1 + forecast_days] if weather.daily else []
         cols = max(1, forecast_days)
         col_w = int((width - pad * 2) / cols)
-        base_y = y0 + int(height * 0.28)
+        base_y = y0 + int(pad * 0.35)
 
         for idx in range(cols):
             if idx >= len(daily):
