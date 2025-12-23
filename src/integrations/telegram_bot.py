@@ -459,6 +459,12 @@ class TelegramBotListener:
         return payload
 
     # --- AI assistant helpers ---
+    @staticmethod
+    def _trim_text(text, limit=240):
+        text = (text or "").strip()
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 1)].rstrip() + "…"
 
     def _handle_callback(self, callback_query):
         data = callback_query.get("data", "")
@@ -2037,7 +2043,13 @@ class TelegramBotListener:
 
         try:
             refined = AIImage._call_prompt_service(prompt_client, system_content, user_content, temperature=0.8)
-            return (refined or user_prompt).strip()
+            refined = (refined or user_prompt).strip()
+            logger.info(
+                "Daily Cat prompt enhanced | raw=%s | enhanced=%s",
+                self._trim_text(user_prompt, 200),
+                self._trim_text(refined, 260),
+            )
+            return refined
         except Exception:
             logger.exception("Daily cat prompt enhancement failed; using raw prompt.")
             return user_prompt
@@ -2100,6 +2112,12 @@ class TelegramBotListener:
                     plugin_instance.settings["customPrompt"] = cmd
                     plugin_instance.settings["customPromptEnhanced"] = enhanced
                     plugin_instance.settings["customPromptDayKey"] = day_key
+                    self._send_message(
+                        chat_id,
+                        "Custom Daily Cat prompt set for today.\n\n"
+                        f"Enhanced prompt:\n{enhanced}\n\n"
+                        "To clear: `/cat clear`",
+                    )
 
             cache_id, day_key, removed = self._clear_daily_cat_cache(plugin_instance, current_dt)
 
