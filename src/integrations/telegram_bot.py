@@ -4,7 +4,7 @@ import threading
 import time
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, time as dt_time, timedelta
 from io import BytesIO
 import shutil
 
@@ -13,6 +13,7 @@ from requests.exceptions import HTTPError
 from PIL import Image
 
 from model import RefreshInfo
+from refresh_task import PlaylistRefresh
 from utils.image_utils import compute_image_hash
 from plugins.plugin_registry import get_plugin_instance
 from integrations.telegram_text_flow import TelegramTextFlow
@@ -123,6 +124,7 @@ class TelegramBotListener:
         self.load_wx = {}
         self.wx_menu_ids = {}
         self.ss_menu_ids = {}
+        self.pending_cat_reroll = set()
         # Slideshow state
         self.slideshow_thread = None
         self.slideshow_stop = threading.Event()
@@ -323,6 +325,8 @@ class TelegramBotListener:
             self._init_text_prompt(chat_id, message)
         elif text.lower().startswith("/weather") or text.lower().startswith("/wx"):
             self._send_weather_menu(chat_id)
+        elif text.lower().startswith("/cat") or text.lower().startswith("/reroll"):
+            self._reroll_daily_cat(chat_id)
         elif text.lower().startswith("/slideshow"):
             self._handle_slideshow_command(text, chat_id)
         elif text.lower().strip() == "/stop":
@@ -478,6 +482,9 @@ class TelegramBotListener:
             if action == "status":
                 self._send_status(chat_id)
                 self._answer_callback(callback_query["id"])
+            elif action == "cat":
+                self._reroll_daily_cat(chat_id)
+                self._answer_callback(callback_query["id"], text="Refreshing…")
             elif action == "ai":
                 self.pending_help_prompt[chat_id] = "ai"
                 self._api_post(
@@ -1837,6 +1844,7 @@ class TelegramBotListener:
             "- /ai a short prompt — generate an AI image (then tap Generate).",
             "- /txt a short note — generate a note (pick a background, then Render).",
             "- /status — send the latest background preview.",
+            "- /cat — regenerate today’s Daily Cat Weather background (if configured).",
             "",
             "AI image (/ai):",
             "- /ai <prompt> — opens the image generator with buttons for Model/Quality/Style/Palette.",
@@ -1879,6 +1887,9 @@ class TelegramBotListener:
                     {"text": "🎞 Slideshow", "callback_data": "help|slideshow"},
                 ],
                 [
+                    {"text": "🐱 New Daily Cat", "callback_data": "help|cat"},
+                ],
+                [
                     {"text": "✖️ Close", "callback_data": "help|close"},
                 ],
             ]
@@ -1891,6 +1902,133 @@ class TelegramBotListener:
                 "reply_markup": json.dumps(markup),
             },
         )
+
+    @staticmethod
+    def _sanitize_cache_id(value):
+        value = (value or "").strip().lower()
+        value = re.sub(r"[^a-z0-9_-]+", "-", value)
+        value = re.sub(r"-{2,}", "-", value).strip("-")
+        return value or "default"
+
+    @staticmethod
+    def _parse_hhmm(value):
+        value = (value or "").strip()
+        match = re.fullmatch(r"(\d{1,2}):(\d{2})", value)
+        if not match:
+            return dt_time(4, 0)
+        hour = max(0, min(23, int(match.group(1))))
+        minute = max(0, min(59, int(match.group(2))))
+        return dt_time(hour, minute)
+
+    @staticmethod
+    def _day_key(now, refresh_time):
+        if now.timetz().replace(tzinfo=None) < refresh_time:
+            day = (now - timedelta(days=1)).date()
+        else:
+            day = now.date()
+        return day.isoformat()
+
+    def _send_photo_path(self, chat_id, image_path, caption=None):
+        if not image_path or not os.path.exists(image_path):
+            self._send_message(chat_id, "No image available yet.")
+            return
+        with open(image_path, "rb") as img_file:
+            files = {"photo": img_file}
+            data = {"chat_id": chat_id}
+            if caption:
+                data["caption"] = caption
+            self._api_post("sendPhoto", data=data, files=files)
+
+    def _find_daily_cat_plugin_instance(self, current_dt):
+        playlist_manager = self.device_config.get_playlist_manager()
+        playlist = playlist_manager.determine_active_playlist(current_dt)
+        if playlist:
+            for plugin_instance in playlist.plugins:
+                if plugin_instance.plugin_id == "daily_cat_weather":
+                    return playlist, plugin_instance
+
+        for playlist in playlist_manager.playlists:
+            for plugin_instance in playlist.plugins:
+                if plugin_instance.plugin_id == "daily_cat_weather":
+                    return playlist, plugin_instance
+
+        return None, None
+
+    def _clear_daily_cat_cache(self, plugin_instance, current_dt):
+        settings = plugin_instance.settings or {}
+        cache_id = self._sanitize_cache_id(settings.get("cacheId") or "default")
+        daily_refresh_time = self._parse_hhmm(settings.get("dailyRefreshTime") or "04:00")
+        day_key = self._day_key(current_dt, daily_refresh_time)
+
+        cache_dir = os.path.join(self.device_config.BASE_DIR, "..", "mock_display_output", "daily_cat_weather")
+        os.makedirs(cache_dir, exist_ok=True)
+
+        targets = [
+            os.path.join(cache_dir, f"bg_{cache_id}_{day_key}.png"),
+            os.path.join(cache_dir, f"bg_{cache_id}_{day_key}.json"),
+            os.path.join(cache_dir, f"latest_bg_{cache_id}.png"),
+        ]
+
+        removed = []
+        for path in targets:
+            if not os.path.exists(path):
+                continue
+            try:
+                os.remove(path)
+                removed.append(os.path.basename(path))
+            except Exception:
+                logger.exception("Failed to remove Daily Cat Weather cache file: %s", path)
+
+        return cache_id, day_key, removed
+
+    def _reroll_daily_cat(self, chat_id):
+        if chat_id in self.pending_cat_reroll:
+            self._send_message(chat_id, "Already refreshing the Daily Cat Weather image…")
+            return
+
+        self.pending_cat_reroll.add(chat_id)
+        self._send_message(chat_id, "Refreshing Daily Cat Weather…")
+        threading.Thread(
+            target=self._reroll_daily_cat_worker,
+            args=(chat_id,),
+            name=f"TelegramCatReroll-{chat_id}",
+            daemon=True,
+        ).start()
+
+    def _reroll_daily_cat_worker(self, chat_id):
+        try:
+            current_dt = (
+                self.refresh_task._get_current_datetime()
+                if hasattr(self.refresh_task, "_get_current_datetime")
+                else datetime.utcnow()
+            )
+            playlist, plugin_instance = self._find_daily_cat_plugin_instance(current_dt)
+            if not playlist or not plugin_instance:
+                self._send_message(
+                    chat_id,
+                    "Daily Cat Weather isn't on any active playlist. Add the `daily_cat_weather` plugin to a playlist in the web UI first.",
+                )
+                return
+
+            cache_id, day_key, removed = self._clear_daily_cat_cache(plugin_instance, current_dt)
+
+            if not getattr(self.refresh_task, "running", False):
+                self._send_message(chat_id, "Refresh task is not running; restart `inkypi.service` and try again.")
+                return
+
+            self.refresh_task.manual_update(PlaylistRefresh(playlist, plugin_instance, force=True))
+
+            suffix = f"(cacheId={cache_id}, day={day_key})"
+            if removed:
+                caption = f"🐱 Daily Cat Weather refreshed {suffix}"
+            else:
+                caption = f"🐱 Daily Cat Weather refreshed {suffix} (no cache files to clear)"
+            self._send_photo_path(chat_id, self.device_config.current_image_file, caption=caption)
+        except Exception as exc:
+            logger.exception("Daily Cat Weather reroll failed: %s", exc)
+            self._send_message(chat_id, f"Daily Cat Weather refresh failed: {exc}")
+        finally:
+            self.pending_cat_reroll.discard(chat_id)
 
     def _send_save_menu(self, chat_id):
         text = (

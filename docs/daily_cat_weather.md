@@ -26,7 +26,10 @@ See `docs/api_keys.md` for `.env` setup.
 - At (and after) `04:00` local time, the next refresh generates a new background image for the day.
 - Between regenerations, the cached background is reused and only the weather overlay updates.
 
+## Telegram Reroll
+
+- Run `/cat` (or tap `🐱 New Daily Cat` from `/help`) to delete today’s cached background and force a regenerate on the next refresh.
+
 ## Cache Location
 
 Cached backgrounds are stored under `mock_display_output/daily_cat_weather/` (including a `latest_bg_<cacheId>.png` convenience copy).
-
