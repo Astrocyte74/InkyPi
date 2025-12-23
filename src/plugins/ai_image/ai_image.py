@@ -29,6 +29,14 @@ GEMINI_IMAGE_SIZES = {
     "4k": "4K",
 }
 
+GEMINI_IMAGE_CONFIG_UNSUPPORTED_MODELS = {
+    # As of google-genai (v1beta), these image-generation models reject `image_config`.
+    "gemini-2.5-flash-image",
+    "gemini-3-pro-image-preview",
+    "models/gemini-2.5-flash-image",
+    "models/gemini-3-pro-image-preview",
+}
+
 OPENROUTER_MODEL_ALIASES = {
     "gpt5mini": "openai/gpt-5-mini",
     "gpt-5-mini": "openai/gpt-5-mini",
@@ -267,29 +275,41 @@ class AIImage(BasePlugin):
 
         try:
             client = genai.Client(api_key=api_key)
-            try:
-                response = client.models.generate_content(
-                    model=image_model,
-                    contents=text_prompt,
-                    config=genai_types.GenerateContentConfig(
-                        response_modalities=["IMAGE"],
-                        image_config=genai_types.ImageConfig(
-                            aspect_ratio=aspect_ratio,
-                            image_size=image_size,
-                        ),
-                    ),
-                )
-            except Exception as exc:
-                msg = str(exc).upper()
-                if "INVALID_ARGUMENT" not in msg and "400" not in msg:
-                    raise
-                logger.warning("Gemini image_config rejected; retrying without image_config: %s", exc)
-                # Some Gemini image models reject image_config but still support generateContent for images.
+            orientation_hint = "landscape" if aspect_ratio == "16:9" else "portrait"
+            text_prompt = (
+                f"{text_prompt}\n\nOutput format: {orientation_hint} {aspect_ratio} aspect ratio, full-bleed, no borders."
+            )
+
+            if image_model in GEMINI_IMAGE_CONFIG_UNSUPPORTED_MODELS:
                 response = client.models.generate_content(
                     model=image_model,
                     contents=text_prompt,
                     config=genai_types.GenerateContentConfig(response_modalities=["IMAGE"]),
                 )
+            else:
+                try:
+                    response = client.models.generate_content(
+                        model=image_model,
+                        contents=text_prompt,
+                        config=genai_types.GenerateContentConfig(
+                            response_modalities=["IMAGE"],
+                            image_config=genai_types.ImageConfig(
+                                aspect_ratio=aspect_ratio,
+                                image_size=image_size,
+                            ),
+                        ),
+                    )
+                except Exception as exc:
+                    msg = str(exc).upper()
+                    if "INVALID_ARGUMENT" not in msg and "400" not in msg:
+                        raise
+                    logger.warning("Gemini image_config rejected; retrying without image_config: %s", exc)
+                    # Some Gemini image models reject image_config but still support generateContent for images.
+                    response = client.models.generate_content(
+                        model=image_model,
+                        contents=text_prompt,
+                        config=genai_types.GenerateContentConfig(response_modalities=["IMAGE"]),
+                    )
         except Exception as e:
             logger.exception("Gemini image request failed: %s", e)
             raise RuntimeError(f"Gemini image request failure: {e}") from e

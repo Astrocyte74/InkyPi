@@ -48,6 +48,14 @@ GEMINI_IMAGE_SIZES = {
     "4k": "4K",
 }
 
+GEMINI_IMAGE_CONFIG_UNSUPPORTED_MODELS = {
+    # As of google-genai (v1beta), these image-generation models reject `image_config`.
+    "gemini-2.5-flash-image",
+    "gemini-3-pro-image-preview",
+    "models/gemini-2.5-flash-image",
+    "models/gemini-3-pro-image-preview",
+}
+
 
 @dataclass(frozen=True)
 class WeatherSnapshot:
@@ -476,12 +484,25 @@ class DailyCatWeather(BasePlugin):
 
     @staticmethod
     def _generate_gemini_background(api_key, prompt, model, image_size, aspect_ratio):
+        def _normalize_model_name(name):
+            name = (name or "").strip()
+            return name
+
         def _decode_image_bytes(image_bytes):
             try:
                 return Image.open(BytesIO(image_bytes)).convert("RGB")
             except Exception as exc:
                 logger.exception("Failed to decode Gemini image bytes: %s", exc)
                 raise RuntimeError("Gemini image decoding failure, please check logs.") from exc
+
+        def _generate_content_minimal(client):
+            # Use a minimal config because some models reject image_config.
+            # We guide aspect ratio/size via prompt and then resize to panel resolution.
+            return client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(response_modalities=["IMAGE"]),
+            )
 
         def _extract_image_bytes_from_generate_content(response):
             try:
@@ -504,39 +525,44 @@ class DailyCatWeather(BasePlugin):
 
         try:
             client = genai.Client(api_key=api_key)
-            try:
-                response = client.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config=genai_types.GenerateContentConfig(
-                        response_modalities=["IMAGE"],
-                        image_config=genai_types.ImageConfig(
-                            aspect_ratio=aspect_ratio,
-                            image_size=image_size,
-                        ),
-                    ),
-                )
-            except Exception as exc:
-                logger.warning("Gemini image_config rejected; retrying without image_config: %s", exc)
-                if not _looks_like_invalid_argument(exc):
-                    raise
 
-                # Some Gemini image models reject image_config but still support generateContent for images.
-                # Retry with a minimal config and let Gemini pick the output size.
+            orientation_hint = "landscape" if aspect_ratio == "16:9" else "portrait"
+            prompt = (
+                f"{prompt}\n\n"
+                f"Output format: {orientation_hint} {aspect_ratio} aspect ratio, full-bleed, no borders."
+            )
+
+            normalized_model = _normalize_model_name(model)
+            if normalized_model in GEMINI_IMAGE_CONFIG_UNSUPPORTED_MODELS:
+                response = _generate_content_minimal(client)
+            else:
                 try:
                     response = client.models.generate_content(
                         model=model,
                         contents=prompt,
-                        config=genai_types.GenerateContentConfig(response_modalities=["IMAGE"]),
+                        config=genai_types.GenerateContentConfig(
+                            response_modalities=["IMAGE"],
+                            image_config=genai_types.ImageConfig(
+                                aspect_ratio=aspect_ratio,
+                                image_size=image_size,
+                            ),
+                        ),
                     )
-                except Exception as exc2:
-                    logger.exception("Gemini generate_content retry failed (minimal IMAGE): %s", exc2)
-                    # Final retry: include TEXT modality in case the model requires it.
-                    response = client.models.generate_content(
-                        model=model,
-                        contents=prompt,
-                        config=genai_types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
-                    )
+                except Exception as exc:
+                    logger.warning("Gemini image_config rejected; retrying without image_config: %s", exc)
+                    if not _looks_like_invalid_argument(exc):
+                        raise
+
+                    try:
+                        response = _generate_content_minimal(client)
+                    except Exception as exc2:
+                        logger.exception("Gemini generate_content retry failed (minimal IMAGE): %s", exc2)
+                        # Final retry: include TEXT modality in case the model requires it.
+                        response = client.models.generate_content(
+                            model=model,
+                            contents=prompt,
+                            config=genai_types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
+                        )
         except Exception as exc:
             logger.exception("Gemini request failed: %s", exc)
             raise RuntimeError(f"Gemini image request failure: {exc}") from exc
