@@ -121,4 +121,10 @@ Optional for using Gemini as an additional image backend in the AI Image plugin 
     GEMINI_API_KEY=your-gemini-key
     ```
 - Restart the InkyPi service: `sudo systemctl restart inkypi.service`
-- When set, selecting a Gemini image model (e.g. "Gemini 3 Pro Image") in the UI or Telegram bot routes image generation through Gemini instead of OpenAI for that request. Prompt rewriting still uses OpenAI/OpenRouter when configured.
+- When set, selecting a Gemini image model (e.g. `gemini-2.5-flash-image` or `gemini-3-pro-image-preview`) in the UI or Telegram bot routes image generation through Gemini instead of OpenAI for that request. Prompt rewriting still uses OpenAI/OpenRouter when configured.
+
+Optional Telegram default (uses the model ID):
+
+```
+TELEGRAM_AI_DEFAULT_MODEL=gemini-2.5-flash-image
+```

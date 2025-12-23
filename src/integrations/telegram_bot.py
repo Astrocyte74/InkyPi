@@ -26,7 +26,8 @@ class TelegramBotListener:
     FILE_BASE = "https://api.telegram.org/file/bot{token}"
 
     AI_MODELS = [
-        ("gemini-3-pro-image-preview", "Gemini 3 Pro Image"),
+        ("gemini-2.5-flash-image", "Gemini 2.5 Flash Image"),
+        ("gemini-3-pro-image-preview", "Gemini 3 Pro Image (Preview)"),
         ("dall-e-3", "DALL·E 3"),
         ("gpt-image-1", "GPT Image 1"),
         ("dall-e-2", "DALL·E 2"),
@@ -36,8 +37,9 @@ class TelegramBotListener:
         "dall-e-3": ["standard", "hd"],
         "gpt-image-1": ["medium", "high", "low"],
         "dall-e-2": ["standard"],
-        # Gemini quality is interpreted as image size hints; keep a single sensible option.
-        "gemini-3-pro-image-preview": ["2k"],
+        # Gemini quality maps to image_size (1K / 2K / 4K) in google-genai.
+        "gemini-2.5-flash-image": ["2k", "1k", "4k"],
+        "gemini-3-pro-image-preview": ["2k", "1k", "4k"],
     }
 
     STYLE_OPTIONS = [
@@ -1231,7 +1233,13 @@ class TelegramBotListener:
             return
 
         request_id = f"{chat_id}:{int(time.time()*1000)}"
-        model = self.AI_MODELS[0][0]
+        model_values = [m[0] for m in self.AI_MODELS]
+        model = (
+            (self.device_config.load_env_key("TELEGRAM_AI_DEFAULT_MODEL") or "").strip()
+            or self.AI_MODELS[0][0]
+        )
+        if model not in model_values:
+            model = self.AI_MODELS[0][0]
         quality = self.QUALITY_OPTIONS[model][0]
         request = {
             "id": request_id,

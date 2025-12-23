@@ -23,6 +23,12 @@ DEFAULT_IMAGE_MODEL = "dall-e-3"
 DEFAULT_IMAGE_QUALITY = "standard"
 DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-flash-lite"
 
+GEMINI_IMAGE_SIZES = {
+    "1k": "1K",
+    "2k": "2K",
+    "4k": "4K",
+}
+
 OPENROUTER_MODEL_ALIASES = {
     "gpt5mini": "openai/gpt-5-mini",
     "gpt-5-mini": "openai/gpt-5-mini",
@@ -189,6 +195,8 @@ class AIImage(BasePlugin):
 
         text_prompt = settings.get("textPrompt", "") or ""
         image_model = settings.get("imageModel") or "gemini-3-pro-image-preview"
+        quality_key = (settings.get("quality") or "2k").strip().lower()
+        image_size = GEMINI_IMAGE_SIZES.get(quality_key, "2K")
         randomize_prompt = settings.get("randomizePrompt") == "true"
         creative_enhance = settings.get("creativeEnhance") == "true"
         palette = (settings.get("palette") or "spectra6").lower()
@@ -250,10 +258,11 @@ class AIImage(BasePlugin):
         aspect_ratio = "9:16" if orientation == "vertical" else "16:9"
 
         logger.info(
-            "Generating Gemini image | model=%s | orientation=%s | aspect=%s",
+            "Generating Gemini image | model=%s | orientation=%s | aspect=%s | size=%s",
             image_model,
             orientation,
             aspect_ratio,
+            image_size,
         )
 
         try:
@@ -265,7 +274,7 @@ class AIImage(BasePlugin):
                     response_modalities=["IMAGE"],
                     image_config=genai_types.ImageConfig(
                         aspect_ratio=aspect_ratio,
-                        image_size="2K",
+                        image_size=image_size,
                     ),
                 ),
             )
