@@ -6,6 +6,7 @@ import base64
 import requests
 import logging
 import os
+import re
 
 try:
     # Optional Gemini image backend (google-genai)
@@ -20,6 +21,19 @@ logger = logging.getLogger(__name__)
 IMAGE_MODELS = ["dall-e-3", "dall-e-2", "gpt-image-1"]
 DEFAULT_IMAGE_MODEL = "dall-e-3"
 DEFAULT_IMAGE_QUALITY = "standard"
+DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-flash-lite"
+
+OPENROUTER_MODEL_ALIASES = {
+    "gpt5mini": "openai/gpt-5-mini",
+    "gpt-5-mini": "openai/gpt-5-mini",
+    "gpt4o": "openai/gpt-4o",
+    "gpt-4o": "openai/gpt-4o",
+    "gpt4omini": "openai/gpt-4o-mini",
+    "gpt-4o-mini": "openai/gpt-4o-mini",
+    "gemini-flash-lite": "google/gemini-2.5-flash-lite",
+    "gemini-2.5-flash-lite": "google/gemini-2.5-flash-lite",
+    "flashlite": "google/gemini-2.5-flash-lite",
+}
 
 SPECTRA6_INSTRUCTIONS = (
     "Generate a flat, high-contrast illustration sized 800x480 pixels using only black, white, red, green, blue, "
@@ -58,6 +72,19 @@ FAR_SIDE_INSTRUCTIONS = (
 TRUTHY_VALUES = {"1", "true", "yes", "on"}
 
 class AIImage(BasePlugin):
+    @staticmethod
+    def _resolve_openrouter_model(env_value):
+        if not env_value:
+            return DEFAULT_OPENROUTER_MODEL
+
+        candidates = [token for token in re.split(r"[,\\s]+", env_value.strip()) if token]
+        if not candidates:
+            return DEFAULT_OPENROUTER_MODEL
+
+        selected = candidates[0]
+        alias_key = selected.strip().lower()
+        return OPENROUTER_MODEL_ALIASES.get(alias_key, selected)
+
     def generate_settings_template(self):
         template_params = super().generate_settings_template()
         template_params['api_key'] = {
@@ -73,7 +100,7 @@ class AIImage(BasePlugin):
             return {
                 "type": "openrouter",
                 "api_key": open_router_key,
-                "model": device_config.load_env_key("OPEN_ROUTER_MODEL") or "google/gemini-2.5-flash-lite",
+                "model": AIImage._resolve_openrouter_model(device_config.load_env_key("OPEN_ROUTER_MODEL")),
                 "referer": device_config.load_env_key("OPEN_ROUTER_REFERRER") or "https://github.com/fatihak/InkyPi",
                 "title": device_config.load_env_key("OPEN_ROUTER_TITLE") or "InkyPi"
             }

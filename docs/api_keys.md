@@ -104,7 +104,9 @@ Optional for using OpenRouter-compatible text models when randomising or enhanci
 - Add the key to `/usr/local/inkypi/.env`:
     ```
     OPEN_ROUTER_SECRET=your-openrouter-key
-    OPEN_ROUTER_MODEL=google/gemini-2.5-flash-lite   # optional override
+    # Optional override: supports a comma/space-separated list; InkyPi uses the first entry.
+    # You can use full OpenRouter IDs (e.g. openai/gpt-5-mini) or short aliases (gpt5mini, gpt4o, gemini-flash-lite).
+    OPEN_ROUTER_MODEL=gpt5mini, gemini-flash-lite
     ```
 - Restart the InkyPi service: `sudo systemctl restart inkypi.service`
 - When set, InkyPi uses the specified OpenRouter model for prompt rewriting; image generation still uses OpenAI's image API.
