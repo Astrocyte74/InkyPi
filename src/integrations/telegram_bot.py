@@ -4,6 +4,7 @@ import threading
 import time
 import logging
 import re
+import random
 from datetime import datetime, time as dt_time, timedelta
 from io import BytesIO
 import shutil
@@ -325,6 +326,13 @@ class TelegramBotListener:
             self._init_text_prompt(chat_id, message)
         elif text.lower().startswith("/weather") or text.lower().startswith("/wx"):
             self._send_weather_menu(chat_id)
+        elif text.lower().startswith("/theme"):
+            parts = text.split(maxsplit=1)
+            arg = parts[1].strip() if len(parts) > 1 else ""
+            if not arg:
+                self._send_daily_cat_theme_menu(chat_id)
+            else:
+                self._set_daily_cat_theme(chat_id, arg)
         elif text.lower().startswith("/cat") or text.lower().startswith("/reroll"):
             parts = text.split(maxsplit=1)
             user_prompt = parts[1].strip() if len(parts) > 1 else None
@@ -497,6 +505,9 @@ class TelegramBotListener:
             elif action == "cat":
                 self._reroll_daily_cat(chat_id)
                 self._answer_callback(callback_query["id"], text="Refreshing…")
+            elif action == "theme":
+                self._send_daily_cat_theme_menu(chat_id)
+                self._answer_callback(callback_query["id"])
             elif action == "ai":
                 self.pending_help_prompt[chat_id] = "ai"
                 self._api_post(
@@ -548,6 +559,19 @@ class TelegramBotListener:
                 except Exception:
                     logger.exception("Failed to close help menu.")
                 self._answer_callback(callback_query["id"])
+            else:
+                self._answer_callback(callback_query["id"])
+            return
+
+        if flow_type == "cat_theme":
+            chat_id = callback_query.get("message", {}).get("chat", {}).get("id")
+            if not chat_id:
+                self._answer_callback(callback_query["id"])
+                return
+            action = parts[1] if len(parts) > 1 else None
+            if action == "set" and len(parts) >= 3:
+                self._set_daily_cat_theme(chat_id, parts[2])
+                self._answer_callback(callback_query["id"], text="Setting theme…")
             else:
                 self._answer_callback(callback_query["id"])
             return
@@ -1859,6 +1883,7 @@ class TelegramBotListener:
             "- /cat — regenerate today’s Daily Cat Weather background (if configured).",
             "- /cat <prompt> — set a custom scene for the rest of today (auto-enhanced).",
             "- /cat clear — go back to the auto scene generator.",
+            "- /theme — choose the Daily Cat illustration theme (if configured).",
             "",
             "AI image (/ai):",
             "- /ai <prompt> — opens the image generator with buttons for Model/Quality/Style/Palette.",
@@ -1902,6 +1927,7 @@ class TelegramBotListener:
                 ],
                 [
                     {"text": "🐱 New Daily Cat", "callback_data": "help|cat"},
+                    {"text": "🎨 Cat Theme", "callback_data": "help|theme"},
                 ],
                 [
                     {"text": "✖️ Close", "callback_data": "help|close"},
@@ -2021,7 +2047,7 @@ class TelegramBotListener:
             "title": self.device_config.load_env_key("OPEN_ROUTER_TITLE") or "InkyPi",
         }
 
-    def _enhance_daily_cat_user_prompt(self, user_prompt):
+    def _enhance_daily_cat_user_prompt(self, user_prompt, theme_id=None):
         if not user_prompt or not user_prompt.strip():
             return user_prompt
 
@@ -2035,6 +2061,14 @@ class TelegramBotListener:
             logger.exception("Failed to import AIImage helper; prompt enhancement disabled.")
             return user_prompt
 
+        theme_hint = ""
+        try:
+            from plugins.daily_cat_weather.daily_cat_weather import DailyCatWeather  # local import
+
+            theme_hint = DailyCatWeather._theme_prompt_hint(theme_id)
+        except Exception:
+            theme_hint = ""
+
         system_content = (
             "You rewrite user ideas into a single strong image-generation prompt for a children's book illustration. "
             "Preserve the core idea and keep it playful and imaginative. Always include: "
@@ -2042,6 +2076,7 @@ class TelegramBotListener:
             "No text, no captions, no speech bubbles, no letters, no numbers. Not photorealistic. Full-bleed scene. "
             "Do not create panels, split layouts, frames, borders, dividers, or any weather widgets (thermometers/gauges/icons). "
             "Add composition, setting, mood, and a few concrete visual details without introducing new main subjects. "
+            f"{theme_hint}"
             "Keep under 60 words. Return only the refined prompt."
         )
         user_content = f"User idea: \"{user_prompt.strip()}\""
@@ -2058,6 +2093,196 @@ class TelegramBotListener:
         except Exception:
             logger.exception("Daily cat prompt enhancement failed; using raw prompt.")
             return user_prompt
+
+    def _daily_cat_theme_presets(self):
+        try:
+            from plugins.daily_cat_weather.daily_cat_weather import IMAGE_THEME_PRESETS  # local import
+
+            return IMAGE_THEME_PRESETS or {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _normalize_theme_token(value):
+        return re.sub(r"[^a-z0-9]+", "", (value or "").strip().lower())
+
+    def _resolve_daily_cat_theme_id(self, raw):
+        raw = (raw or "").strip()
+        if not raw:
+            return ""
+
+        presets = self._daily_cat_theme_presets()
+        if not presets:
+            return "storybook" if self._normalize_theme_token(raw) in {"storybook", "default"} else ""
+
+        keys = list(presets.keys())
+
+        if raw.isdigit():
+            idx = int(raw) - 1
+            if 0 <= idx < len(keys):
+                return keys[idx]
+            return ""
+
+        token = self._normalize_theme_token(raw)
+        if token in {"random", "rand"}:
+            return "random"
+
+        for theme_id in keys:
+            if token == self._normalize_theme_token(theme_id):
+                return theme_id
+
+        for theme_id, preset in presets.items():
+            label = preset.get("label") or ""
+            if token == self._normalize_theme_token(label):
+                return theme_id
+
+        matches = []
+        for theme_id, preset in presets.items():
+            label = preset.get("label") or ""
+            if self._normalize_theme_token(theme_id).startswith(token) or self._normalize_theme_token(label).startswith(token):
+                matches.append(theme_id)
+
+        return matches[0] if len(matches) == 1 else ""
+
+    def _send_daily_cat_theme_menu(self, chat_id):
+        current_dt = (
+            self.refresh_task._get_current_datetime()
+            if hasattr(self.refresh_task, "_get_current_datetime")
+            else datetime.utcnow()
+        )
+        playlist, plugin_instance = self._find_daily_cat_plugin_instance(current_dt)
+        if not playlist or not plugin_instance:
+            self._send_message(
+                chat_id,
+                "Daily Cat Weather isn't on any active playlist. Add the `daily_cat_weather` plugin to a playlist in the web UI first.",
+            )
+            return
+
+        presets = self._daily_cat_theme_presets()
+        current_theme = ((plugin_instance.settings or {}).get("imageTheme") or "storybook").strip().lower()
+        if presets and current_theme not in presets:
+            current_theme = "storybook"
+
+        current_label = (presets.get(current_theme, {}).get("label") if presets else None) or current_theme
+
+        lines = [
+            "Daily Cat Theme",
+            f"Current: {current_label} ({current_theme})",
+            "",
+            "Pick a theme (or run `/theme <name>`):",
+        ]
+
+        if presets:
+            for idx, (theme_id, preset) in enumerate(presets.items(), start=1):
+                label = preset.get("label") or theme_id
+                lines.append(f"{idx}. {label} — `{theme_id}`")
+
+        buttons = []
+        theme_items = list(presets.items()) if presets else [("storybook", {"label": "Storybook"})]
+        row = []
+        for theme_id, preset in theme_items:
+            label = preset.get("label") or theme_id
+            text = f"✅ {label}" if theme_id == current_theme else label
+            row.append({"text": text, "callback_data": f"cat_theme|set|{theme_id}"})
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        buttons.append(
+            [
+                {"text": "🎲 Random", "callback_data": "cat_theme|set|random"},
+                {"text": "✖️ Close", "callback_data": "help|close"},
+            ]
+        )
+
+        self._api_post(
+            "sendMessage",
+            data={"chat_id": chat_id, "text": "\n".join(lines), "reply_markup": json.dumps({"inline_keyboard": buttons})},
+        )
+
+    def _set_daily_cat_theme(self, chat_id, raw_theme):
+        raw_theme = (raw_theme or "").strip()
+        if not raw_theme or raw_theme.lower() in {"help", "menu", "list", "themes", "?"}:
+            self._send_daily_cat_theme_menu(chat_id)
+            return
+
+        theme_id = self._resolve_daily_cat_theme_id(raw_theme)
+        if not theme_id:
+            presets = self._daily_cat_theme_presets()
+            choices = ", ".join(presets.keys()) if presets else "storybook"
+            self._send_message(chat_id, f"Unknown theme. Choices: {choices}\n\nTry `/theme` to browse.")
+            return
+
+        if chat_id in self.pending_cat_reroll:
+            self._send_message(chat_id, "Daily Cat Weather is already updating…")
+            return
+
+        self.pending_cat_reroll.add(chat_id)
+        self._send_message(chat_id, "Updating Daily Cat theme…")
+        threading.Thread(
+            target=self._set_daily_cat_theme_worker,
+            args=(chat_id, theme_id),
+            name=f"TelegramCatTheme-{chat_id}",
+            daemon=True,
+        ).start()
+
+    def _set_daily_cat_theme_worker(self, chat_id, theme_id):
+        try:
+            current_dt = (
+                self.refresh_task._get_current_datetime()
+                if hasattr(self.refresh_task, "_get_current_datetime")
+                else datetime.utcnow()
+            )
+            playlist, plugin_instance = self._find_daily_cat_plugin_instance(current_dt)
+            if not playlist or not plugin_instance:
+                self._send_message(
+                    chat_id,
+                    "Daily Cat Weather isn't on any active playlist. Add the `daily_cat_weather` plugin to a playlist in the web UI first.",
+                )
+                return
+
+            presets = self._daily_cat_theme_presets()
+            if theme_id == "random":
+                keys = list(presets.keys())
+                if keys:
+                    theme_id = random.choice(keys)
+                else:
+                    theme_id = "storybook"
+
+            plugin_instance.settings = plugin_instance.settings or {}
+            plugin_instance.settings["imageTheme"] = theme_id
+
+            try:
+                current_nonce = int((plugin_instance.settings or {}).get("rerollNonce") or 0)
+            except (TypeError, ValueError):
+                current_nonce = 0
+            plugin_instance.settings["rerollNonce"] = current_nonce + 1
+
+            cache_id, day_key, removed = self._clear_daily_cat_cache(plugin_instance, current_dt)
+            try:
+                self.device_config.write_config()
+            except Exception:
+                logger.exception("Failed to persist Daily Cat Weather settings.")
+
+            if not getattr(self.refresh_task, "running", False):
+                self._send_message(chat_id, "Refresh task is not running; restart `inkypi.service` and try again.")
+                return
+
+            self.refresh_task.manual_update(PlaylistRefresh(playlist, plugin_instance, force=True))
+
+            plugin_image_path = os.path.join(self.device_config.plugin_image_dir, plugin_instance.get_image_path())
+            label = (presets.get(theme_id, {}).get("label") if presets else None) or theme_id
+            suffix = f"(theme={theme_id}, cacheId={cache_id}, day={day_key})"
+            caption = f"🎨 Daily Cat theme set to {label} {suffix}"
+            if not removed:
+                caption += " (no cache files to clear)"
+            self._send_photo_path(chat_id, plugin_image_path, caption=caption)
+        except Exception as exc:
+            logger.exception("Daily Cat theme update failed: %s", exc)
+            self._send_message(chat_id, f"Daily Cat theme update failed: {exc}")
+        finally:
+            self.pending_cat_reroll.discard(chat_id)
 
     def _reroll_daily_cat(self, chat_id, user_prompt=None):
         if chat_id in self.pending_cat_reroll:
@@ -2113,7 +2338,10 @@ class TelegramBotListener:
                 else:
                     daily_refresh_time = self._parse_hhmm(plugin_instance.settings.get("dailyRefreshTime") or "04:00")
                     day_key = self._day_key(current_dt, daily_refresh_time)
-                    enhanced = self._enhance_daily_cat_user_prompt(cmd)
+                    enhanced = self._enhance_daily_cat_user_prompt(
+                        cmd,
+                        theme_id=(plugin_instance.settings or {}).get("imageTheme"),
+                    )
                     plugin_instance.settings["customPrompt"] = cmd
                     plugin_instance.settings["customPromptEnhanced"] = enhanced
                     plugin_instance.settings["customPromptDayKey"] = day_key
@@ -2125,6 +2353,10 @@ class TelegramBotListener:
                     )
 
             cache_id, day_key, removed = self._clear_daily_cat_cache(plugin_instance, current_dt)
+            try:
+                self.device_config.write_config()
+            except Exception:
+                logger.exception("Failed to persist Daily Cat Weather settings.")
 
             if not getattr(self.refresh_task, "running", False):
                 self._send_message(chat_id, "Refresh task is not running; restart `inkypi.service` and try again.")

@@ -17,6 +17,7 @@ See `docs/api_keys.md` for `.env` setup.
    - Location (lat/lon)
    - Optional `Location Label` (e.g. `Carstairs, AB`) to show at the top of the sidebar
    - Units
+   - Optional `Cat Illustration Theme` (e.g. `Paper Cutout` or `Woodblock`)
    - Optional `Holiday Theming` to add subtle nearest-holiday touches to the daily background prompt
    - `New Image Time` = `04:00` (local time)
    - `Forecast Days` = `3`
@@ -35,6 +36,7 @@ See `docs/api_keys.md` for `.env` setup.
 - Run `/cat` (or tap `🐱 New Daily Cat` from `/help`) to delete today’s cached background and force a regenerate on the next refresh.
 - Run `/cat <your idea>` to set a custom scene for the rest of today (until the next `New Image Time` rollover); the idea is auto-enhanced before generating.
 - Run `/cat clear` to return to the auto scene generator.
+- Run `/theme` to browse and set the Daily Cat illustration theme.
 
 ## Cache Location
 

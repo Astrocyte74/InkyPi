@@ -95,6 +95,21 @@
 </div>
 
 <div class="form-group">
+    <label for="imageTheme" class="form-label">Cat Illustration Theme:</label>
+    <select id="imageTheme" name="imageTheme" class="form-input">
+        <option value="storybook">Storybook</option>
+        <option value="paper_cutout">Paper Cutout</option>
+        <option value="midcentury_poster">Mid-Century Poster</option>
+        <option value="comic">Comic</option>
+        <option value="linocut">Linocut Print</option>
+        <option value="woodblock">Woodblock</option>
+    </select>
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Changes the art direction for the daily background (no text in the artwork).
+    </div>
+</div>
+
+<div class="form-group">
     <label for="quality" class="form-label">Quality:</label>
     <select id="quality" name="quality" class="form-input">
         <option value="1k">1K</option>
@@ -286,6 +301,7 @@
             document.getElementById('dailyRefreshTime').value = pluginSettings.dailyRefreshTime || '04:00';
             document.getElementById('forecastDays').value = pluginSettings.forecastDays || '3';
             document.getElementById('imageModel').value = pluginSettings.imageModel || 'gemini-2.5-flash-image';
+            document.getElementById('imageTheme').value = (pluginSettings.imageTheme || 'storybook').toLowerCase();
             document.getElementById('quality').value = (pluginSettings.quality || '2k').toLowerCase();
             document.getElementById('cacheId').value = pluginSettings.cacheId || 'default';
         } else {
@@ -297,6 +313,7 @@
             document.getElementById('dailyRefreshTime').value = '04:00';
             document.getElementById('forecastDays').value = '3';
             document.getElementById('imageModel').value = 'gemini-2.5-flash-image';
+            document.getElementById('imageTheme').value = 'storybook';
             document.getElementById('quality').value = '2k';
             document.getElementById('cacheId').value = 'default';
         }

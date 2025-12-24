@@ -62,6 +62,33 @@ DEFAULT_CAT_DESCRIPTION = (
     "a larger-than-average (but not obese) orange-and-white cat (orange/ginger coat with white chest and paws; no other fur colours)"
 )
 
+IMAGE_THEME_PRESETS = {
+    "storybook": {
+        "label": "Storybook",
+        "hint": "Art direction: classic children's picture book illustration, friendly and whimsical. ",
+    },
+    "paper_cutout": {
+        "label": "Paper Cutout",
+        "hint": "Art direction: layered paper cutout collage, crisp shapes, playful textures (no gradients). ",
+    },
+    "midcentury_poster": {
+        "label": "Mid-Century Poster",
+        "hint": "Art direction: mid-century modern travel poster, bold flat shapes, clean geometry. ",
+    },
+    "comic": {
+        "label": "Comic",
+        "hint": "Art direction: clean comic illustration with bold outlines and flat colors (single scene, not a panel). ",
+    },
+    "linocut": {
+        "label": "Linocut Print",
+        "hint": "Art direction: linocut print look with chunky carved shapes and high contrast (still in flat colors). ",
+    },
+    "woodblock": {
+        "label": "Woodblock",
+        "hint": "Art direction: Japanese woodblock-inspired composition, simplified shapes, flat colors, strong silhouettes. ",
+    },
+}
+
 LAYOUT_VERSION = 1
 SIDEBAR_WIDTH_RATIO = 0.30
 
@@ -121,6 +148,10 @@ class DailyCatWeather(BasePlugin):
         holiday_window_days = int(settings.get("holidayWindowDays") or 14)
         holiday_window_days = max(0, min(60, holiday_window_days))
 
+        image_theme = (settings.get("imageTheme") or "storybook").strip().lower()
+        if image_theme not in IMAGE_THEME_PRESETS:
+            image_theme = "storybook"
+
         model = (settings.get("imageModel") or "gemini-2.5-flash-image").strip()
         if not model.startswith("gemini-"):
             raise RuntimeError("Image model must be a Gemini model (gemini-*).")
@@ -166,6 +197,7 @@ class DailyCatWeather(BasePlugin):
             "holiday_theming": holiday_theming,
             "holiday_region": holiday_region,
             "holiday_window_days": holiday_window_days,
+            "image_theme": image_theme,
         }
         if active_custom_prompt:
             fingerprint_values.update(
@@ -222,6 +254,7 @@ class DailyCatWeather(BasePlugin):
                     reroll_nonce=reroll_nonce,
                     aspect_hint=aspect_hint,
                     holiday_hint=holiday_hint,
+                    theme_hint=self._theme_prompt_hint(image_theme),
                 )
             else:
                 holiday_hint = ""
@@ -239,6 +272,7 @@ class DailyCatWeather(BasePlugin):
                     day_key=day_key,
                     aspect_hint=aspect_hint,
                     holiday_hint=holiday_hint,
+                    theme_hint=self._theme_prompt_hint(image_theme),
                 )
             background = self._generate_gemini_background(
                 api_key=gemini_key,
@@ -359,7 +393,16 @@ class DailyCatWeather(BasePlugin):
             daily=daily,
         )
 
-    def _build_prompt(self, weather, reroll_nonce=0, cache_id="default", day_key="", aspect_hint="", holiday_hint=""):
+    def _build_prompt(
+        self,
+        weather,
+        reroll_nonce=0,
+        cache_id="default",
+        day_key="",
+        aspect_hint="",
+        holiday_hint="",
+        theme_hint="",
+    ):
         base = (
             "Children's book illustration of an ambitious cat on a wholesome daily mission. "
             f"Main character: {DEFAULT_CAT_DESCRIPTION}. "
@@ -389,6 +432,7 @@ class DailyCatWeather(BasePlugin):
             f"The scene matches today's weather: {weather.description}. "
             f"{constraints}"
             f"{holiday_hint}"
+            f"{theme_hint}"
             "Encourage creativity: pick an original setting and mission; avoid repeating the same scene across rerolls. "
             f"The cat is {activity}{accessories}. "
             f"Target aspect ratio: {aspect_hint}. "
@@ -403,7 +447,15 @@ class DailyCatWeather(BasePlugin):
             f"{SPECTRA6_INSTRUCTIONS}"
         )
 
-    def _build_custom_prompt(self, weather, user_prompt, reroll_nonce=0, aspect_hint="", holiday_hint=""):
+    def _build_custom_prompt(
+        self,
+        weather,
+        user_prompt,
+        reroll_nonce=0,
+        aspect_hint="",
+        holiday_hint="",
+        theme_hint="",
+    ):
         base = (
             "Children's book illustration of an ambitious cat on a wholesome daily mission. "
             f"Main character: {DEFAULT_CAT_DESCRIPTION}. "
@@ -429,6 +481,7 @@ class DailyCatWeather(BasePlugin):
             f"{base}"
             f"{weather_line}"
             f"{holiday_hint}"
+            f"{theme_hint}"
             f"{constraints}"
             "Use the following scene idea as the main direction (you may add small visual details, but do not add new main subjects): "
             f"{user_prompt}. "
@@ -444,6 +497,12 @@ class DailyCatWeather(BasePlugin):
             "Absolutely no text, labels, or numbers anywhere in the illustration."
             f"{SPECTRA6_INSTRUCTIONS}"
         )
+
+    @classmethod
+    def _theme_prompt_hint(cls, theme_id):
+        theme_id = (theme_id or "").strip().lower()
+        preset = IMAGE_THEME_PRESETS.get(theme_id) or IMAGE_THEME_PRESETS["storybook"]
+        return preset.get("hint") or ""
 
     @staticmethod
     def _nth_weekday_of_month(year, month, weekday, n):
