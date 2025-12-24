@@ -59,7 +59,7 @@ GEMINI_IMAGE_CONFIG_UNSUPPORTED_MODELS = {
 
 PROMPT_VERSION = 5
 DEFAULT_CAT_DESCRIPTION = (
-    "a larger-than-average (but not obese) orange-and-white cat (ginger tabby with a white chest and paws)"
+    "a larger-than-average (but not obese) orange-and-white cat (orange/ginger coat with white chest and paws; no other fur colours)"
 )
 
 LAYOUT_VERSION = 1
@@ -335,6 +335,7 @@ class DailyCatWeather(BasePlugin):
         base = (
             "Children's book illustration of an ambitious cat on a wholesome daily mission. "
             f"Main character: {DEFAULT_CAT_DESCRIPTION}. "
+            "The cat's fur is strictly orange and white (no other fur colours). "
             "Keep it lighthearted and amusing, with a whimsical storybook vibe (not photorealistic). "
             "No text, no captions, no speech bubbles. "
         )
@@ -377,6 +378,7 @@ class DailyCatWeather(BasePlugin):
         base = (
             "Children's book illustration of an ambitious cat on a wholesome daily mission. "
             f"Main character: {DEFAULT_CAT_DESCRIPTION}. "
+            "The cat's fur is strictly orange and white (no other fur colours). "
             "Keep it lighthearted and amusing, with a whimsical storybook vibe (not photorealistic). "
             "No text, no captions, no speech bubbles. "
         )
@@ -867,8 +869,7 @@ class DailyCatWeather(BasePlugin):
         header_h = max(icon_size, y_cursor - icon_y)
         y = icon_y + header_h + pad
 
-        draw.text((pad, y), f"Next {forecast_days} days", fill=(0, 0, 0), font=title_font)
-        y += _text_size(f"Next {forecast_days} days", title_font)[1] + int(pad * 0.6)
+        y += int(pad * 0.4)
 
         daily = weather.daily[1 : 1 + forecast_days] if weather.daily else []
         if not daily:
