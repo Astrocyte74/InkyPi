@@ -823,6 +823,15 @@ class DailyCatWeather(BasePlugin):
             draw.text((pad, y + int(pad * 1.4)), "Unavailable", fill=(0, 0, 0), font=small_font)
             return panel
 
+        def _format_degree(value):
+            try:
+                value = round(float(value))
+            except (TypeError, ValueError):
+                value = 0
+            if weather.units == "standard":
+                return f"{value}K"
+            return f"{value}°"
+
         if location_label:
             draw.text((pad, y), location_label, fill=text_secondary, font=location_font)
             y += _line_height(location_font) + int(gap * 0.8)
@@ -868,6 +877,21 @@ class DailyCatWeather(BasePlugin):
                 draw.text((text_x, y_cursor), line, fill=(0, 0, 0), font=small_font)
                 y_cursor += small_lh + int(line_gap * 0.9)
 
+        today_high_low = ""
+        try:
+            today = (weather.daily or [None])[0] or {}
+            temps = today.get("temp") or {}
+            high = temps.get("max")
+            low = temps.get("min")
+            if high is not None and low is not None:
+                today_high_low = f"H: {_format_degree(high)}  L: {_format_degree(low)}"
+        except Exception:
+            today_high_low = ""
+
+        if today_high_low:
+            draw.text((text_x, y_cursor), today_high_low, fill=(0, 0, 0), font=small_font)
+            y_cursor += small_lh + line_gap
+
         feels_line = f"Feels like {feels_value}{temp_unit}"
         draw.text((text_x, y_cursor), feels_line, fill=text_secondary, font=small_font)
         y_cursor += small_lh + line_gap
@@ -886,7 +910,7 @@ class DailyCatWeather(BasePlugin):
         row_h = max(64, int(remaining_h / max(1, forecast_days)))
         row_icon = max(28, int(row_h * 0.55))
         row_day_font = self._font("Jost", max(13, int(row_h * 0.24)), bold=True)
-        base_row_temp_font_size = max(12, int(row_h * 0.20))
+        base_row_temp_font_size = max(13, int(row_h * 0.24))
         row_temp_font = self._font("Jost", base_row_temp_font_size)
         row_lh = max(_line_height(row_temp_font), _line_height(row_day_font))
 
