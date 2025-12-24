@@ -68,6 +68,8 @@ class TelegramBotListener:
         "bw": "Black & White",
     }
 
+    DAILY_CARD_DISABLED_IDS = {"family"}
+
     @staticmethod
     def _resolve_default_model(env_value, model_values, fallback):
         """Resolve TELEGRAM_AI_DEFAULT_MODEL which may contain a comma/space-separated list."""
@@ -2476,7 +2478,12 @@ class TelegramBotListener:
         try:
             from plugins.daily_theme_card.daily_theme_card import DailyThemeCard  # local import
 
-            return DailyThemeCard._card_leaf_choices() or []
+            choices = DailyThemeCard._card_leaf_choices() or []
+            return [
+                item
+                for item in choices
+                if (str(item.get("id") or "").strip().lower() not in self.DAILY_CARD_DISABLED_IDS)
+            ]
         except Exception:
             return []
 
@@ -2484,7 +2491,26 @@ class TelegramBotListener:
         try:
             from plugins.daily_theme_card.daily_theme_card import DailyThemeCard  # local import
 
-            return DailyThemeCard._card_groups() or []
+            groups = DailyThemeCard._card_groups() or []
+            cleaned = []
+            for group in groups:
+                if not isinstance(group, dict):
+                    continue
+                children = group.get("children") or []
+                if not isinstance(children, list):
+                    children = []
+                filtered_children = []
+                for child in children:
+                    if not isinstance(child, dict):
+                        continue
+                    cid = str(child.get("id") or "").strip().lower()
+                    if cid in self.DAILY_CARD_DISABLED_IDS:
+                        continue
+                    filtered_children.append(child)
+                if not filtered_children:
+                    continue
+                cleaned.append({**group, "children": filtered_children})
+            return cleaned
         except Exception:
             return []
 
@@ -2519,7 +2545,10 @@ class TelegramBotListener:
                     bg_label = self._daily_card_bg_label(bg_mode)
                     presets = self._daily_card_presets()
                     label = (presets.get(card_id, {}).get("label") if presets else None) or card_id
-                    line = f"Card {slot}: {label} (`{card_id}`) • {bg_label}"
+                    if card_id in self.DAILY_CARD_DISABLED_IDS:
+                        line = f"Card {slot}: Family is handled by the banner • {bg_label}"
+                    else:
+                        line = f"Card {slot}: {label} (`{card_id}`) • {bg_label}"
                 else:
                     line = (
                         f"Card {slot}: not configured "
@@ -2580,7 +2609,7 @@ class TelegramBotListener:
         if not presets:
             return ""
 
-        keys = list(presets.keys())
+        keys = [k for k in presets.keys() if k not in self.DAILY_CARD_DISABLED_IDS]
 
         if raw.isdigit():
             idx = int(raw) - 1
@@ -2594,12 +2623,16 @@ class TelegramBotListener:
                 return card_id
 
         for card_id, preset in presets.items():
+            if card_id in self.DAILY_CARD_DISABLED_IDS:
+                continue
             label = preset.get("label") or ""
             if token == self._normalize_theme_token(label):
                 return card_id
 
         matches = []
         for card_id, preset in presets.items():
+            if card_id in self.DAILY_CARD_DISABLED_IDS:
+                continue
             label = preset.get("label") or ""
             if self._normalize_theme_token(card_id).startswith(token) or self._normalize_theme_token(label).startswith(token):
                 matches.append(card_id)
@@ -2775,6 +2808,13 @@ class TelegramBotListener:
         card_id = self._resolve_daily_card_id(raw_card, slot=slot)
         if not card_id:
             self._send_message(chat_id, f"Unknown card.\n\nTry `/card{slot}` to browse.")
+            return
+        if card_id in self.DAILY_CARD_DISABLED_IDS:
+            self._send_message(
+                chat_id,
+                "Family Dates is handled by the banner (edit in the web UI under Settings → Family Dates).\n\n"
+                f"Pick another card with `/card{slot}`.",
+            )
             return
 
         if chat_id in self.pending_card_updates:

@@ -547,6 +547,11 @@ class DailyThemeCard(BasePlugin):
         pad = max(18, int(w * 0.07))
         max_w = w - pad * 2
         card_pad = max(12, int(pad * 0.55))
+        content_x = pad + (card_pad if draw_card_box else 0)
+        content_max_w = w - (content_x * 2)
+        if content_max_w < max(80, int(w * 0.25)):
+            content_x = pad
+            content_max_w = max_w
 
         word_font = self._font("Jost", max(18, int(w * 0.12)), bold=True)
         body_size = max(16, int(w * 0.075))
@@ -621,9 +626,9 @@ class DailyThemeCard(BasePlugin):
             name_font = self._font("Jost", max(18, int(w * 0.13)), bold=True)
             year_font = self._font("Jost", max(12, int(w * 0.05)))
 
-            date_lines = wrap(date_label, date_font, max_w) if date_label else []
-            name_lines = wrap(text, name_font, max_w) if text else ["Family"]
-            year_lines = wrap(year_str, year_font, max_w) if year_str else []
+            date_lines = wrap(date_label, date_font, content_max_w) if date_label else []
+            name_lines = wrap(text, name_font, content_max_w) if text else ["Family"]
+            year_lines = wrap(year_str, year_font, content_max_w) if year_str else []
 
             total_h = 0
             if date_lines:
@@ -640,24 +645,24 @@ class DailyThemeCard(BasePlugin):
                 img = boxed
                 draw = ImageDraw.Draw(img)
             for line in date_lines:
-                draw.text((pad, y), line, fill=(0, 0, 0), font=date_font)
+                draw.text((content_x, y), line, fill=(0, 0, 0), font=date_font)
                 y += line_height(date_font) + int(max(2, pad * 0.05))
             if date_lines:
                 y += int(pad * 0.25)
             for line in name_lines:
-                draw.text((pad, y), line, fill=(0, 0, 0), font=name_font)
+                draw.text((content_x, y), line, fill=(0, 0, 0), font=name_font)
                 y += line_height(name_font) + int(max(2, pad * 0.08))
             if year_lines:
                 y += int(pad * 0.25)
                 for line in year_lines:
-                    draw.text((pad, y), line, fill=(60, 60, 60), font=year_font)
+                    draw.text((content_x, y), line, fill=(60, 60, 60), font=year_font)
                     y += line_height(year_font) + int(max(2, pad * 0.05))
             return img
 
         # Fit body font if needed (keep within ~70% height).
         max_body_h = int(h * 0.70)
         for _ in range(8):
-            body_lines = wrap(text, body_font, max_w)
+            body_lines = wrap(text, body_font, content_max_w)
             body_h = len(body_lines) * line_height(body_font)
             footer_h = (line_height(small_font) * (2 if attribution else 1)) + int(pad * 0.7)
             if body_h + footer_h <= max_body_h or body_size <= 12:
@@ -666,8 +671,8 @@ class DailyThemeCard(BasePlugin):
             body_font = self._font("Jost", body_size)
 
         if is_word:
-            word_lines = wrap(text, word_font, max_w)
-            definition_lines = wrap(attribution, small_font, max_w) if attribution else []
+            word_lines = wrap(text, word_font, content_max_w)
+            definition_lines = wrap(attribution, small_font, content_max_w) if attribution else []
 
             total_h = 0
             total_h += len(word_lines) * (line_height(word_font) + int(max(2, pad * 0.06)))
@@ -681,15 +686,15 @@ class DailyThemeCard(BasePlugin):
                 img = boxed
                 draw = ImageDraw.Draw(img)
             for line in word_lines:
-                draw.text((pad, y), line, fill=(0, 0, 0), font=word_font)
+                draw.text((content_x, y), line, fill=(0, 0, 0), font=word_font)
                 y += line_height(word_font) + int(max(2, pad * 0.06))
             if definition_lines:
                 y += int(pad * 0.35)
                 for line in definition_lines:
-                    draw.text((pad, y), line, fill=(0, 0, 0), font=small_font)
+                    draw.text((content_x, y), line, fill=(0, 0, 0), font=small_font)
                     y += line_height(small_font) + int(max(2, pad * 0.04))
         else:
-            body_lines = wrap(text, body_font, max_w)
+            body_lines = wrap(text, body_font, content_max_w)
             quote_lines = [f"“{body_lines[0]}" if body_lines else "“"]
             quote_lines += body_lines[1:]
             if quote_lines:
@@ -706,13 +711,19 @@ class DailyThemeCard(BasePlugin):
             if boxed is not None:
                 img = boxed
                 draw = ImageDraw.Draw(img)
+            content_left = content_x
+            content_right = w - content_x
+            inner_w = max(1, content_right - content_left)
             for line in quote_lines:
-                draw.text((pad, y), line, fill=(0, 0, 0), font=body_font)
+                x = content_left + max(0, int((inner_w - text_width(line, body_font)) / 2))
+                draw.text((x, y), line, fill=(0, 0, 0), font=body_font)
                 y += line_height(body_font) + int(max(2, pad * 0.08))
 
             if attribution:
                 y += int(pad * 0.4)
-                draw.text((pad, y), f"— {attribution}", fill=(0, 0, 0), font=small_font)
+                attr_line = f"— {attribution}"
+                x = content_left + max(0, int((inner_w - text_width(attr_line, small_font)) / 2))
+                draw.text((x, y), attr_line, fill=(0, 0, 0), font=small_font)
 
         return img
 
