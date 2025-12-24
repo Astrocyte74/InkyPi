@@ -59,9 +59,9 @@ class DailyThemeCard(BasePlugin):
 
         card_id = self._normalize_id(settings.get("cardId") or DEFAULT_CARD_ID) or DEFAULT_CARD_ID
 
-        background_mode = (settings.get("backgroundMode") or "plain").strip().lower()
+        background_mode = (settings.get("backgroundMode") or "illustration_blur").strip().lower()
         if background_mode not in {"plain", "illustration", "illustration_blur"}:
-            background_mode = "plain"
+            background_mode = "illustration_blur"
         illustration_cache_id = (settings.get("illustrationCacheId") or "").strip()
 
         daily_refresh_time = self._parse_hhmm(settings.get("dailyRefreshTime") or "04:00")

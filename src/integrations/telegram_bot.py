@@ -2515,7 +2515,7 @@ class TelegramBotListener:
                 _, card_instance = self._find_daily_theme_card_plugin_instance(current_dt, slot=slot)
                 if card_instance:
                     card_id = ((card_instance.settings or {}).get("cardId") or "inspiration").strip().lower()
-                    bg_mode = ((card_instance.settings or {}).get("backgroundMode") or "plain").strip().lower()
+                    bg_mode = ((card_instance.settings or {}).get("backgroundMode") or "illustration_blur").strip().lower()
                     bg_label = self._daily_card_bg_label(bg_mode)
                     presets = self._daily_card_presets()
                     label = (presets.get(card_id, {}).get("label") if presets else None) or card_id

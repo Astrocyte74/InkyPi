@@ -382,7 +382,7 @@
             document.getElementById('units').value = pluginSettings.units || 'metric';
             document.getElementById('dailyRefreshTime').value = pluginSettings.dailyRefreshTime || '04:00';
             document.getElementById('forecastDays').value = pluginSettings.forecastDays || '3';
-            document.getElementById('backgroundMode').value = (pluginSettings.backgroundMode || 'plain').toLowerCase();
+            document.getElementById('backgroundMode').value = (pluginSettings.backgroundMode || 'illustration_blur').toLowerCase();
             document.getElementById('illustrationCacheId').value = pluginSettings.illustrationCacheId || '';
             $cardId.value = (pluginSettings.cardId || 'inspiration').toLowerCase();
         } else {
@@ -390,7 +390,7 @@
             document.getElementById('units').value = 'metric';
             document.getElementById('dailyRefreshTime').value = '04:00';
             document.getElementById('forecastDays').value = '3';
-            document.getElementById('backgroundMode').value = 'plain';
+            document.getElementById('backgroundMode').value = 'illustration_blur';
             document.getElementById('illustrationCacheId').value = '';
             $cardId.value = 'inspiration';
         }
