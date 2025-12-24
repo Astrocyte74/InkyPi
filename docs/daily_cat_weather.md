@@ -36,7 +36,8 @@ See `docs/api_keys.md` for `.env` setup.
 `Daily Cat Weather` themes are defined in `src/plugins/daily_cat_weather/themes.json`.
 
 - The `Illustration Theme` dropdown (Web UI) and `/theme` (Telegram) both read from this catalog.
-- You can add new themes (e.g., a dog variant or abstract art) by adding a new entry to the JSON file.
+- Local overrides / custom themes are stored at `/usr/local/inkypi/daily_cat_weather.themes.local.json` (override with `INKYPI_DAILY_CAT_THEMES_LOCAL_PATH`).
+- In the Web UI, click **Manage Themes** next to the `Illustration Theme` dropdown to edit themes via a form (writes local overrides only).
 
 ## Telegram Reroll
 

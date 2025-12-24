@@ -167,3 +167,7 @@ cython_debug/
 mock_display_output/
 src/config/device.json
 src/static/images/current_image.png
+
+# Local family events data (do not commit)
+src/plugins/daily_theme_card/family.json
+src/plugins/daily_theme_card/family.local.json

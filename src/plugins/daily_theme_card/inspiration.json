@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "id": "inspiration",
+  "label": "Inspirational Quote (Local)",
+  "type": "quote",
+  "items": [
+    {
+      "text": "Do the best you can until you know better. Then when you know better, do better.",
+      "attribution": "Maya Angelou"
+    },
+    {
+      "text": "We are what we repeatedly do. Excellence, then, is not an act, but a habit.",
+      "attribution": "Will Durant"
+    },
+    {
+      "text": "Little by little, a little becomes a lot.",
+      "attribution": ""
+    },
+    {
+      "text": "If you can do it, you can do it again.",
+      "attribution": ""
+    }
+  ]
+}

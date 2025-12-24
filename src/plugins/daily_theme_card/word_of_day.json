@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "id": "word_of_day",
+  "label": "Word of the Day (Local)",
+  "type": "word",
+  "items": [
+    {
+      "text": "serendipity",
+      "attribution": "finding something good without looking for it"
+    },
+    {
+      "text": "sonder",
+      "attribution": "the realization that everyone has a story"
+    },
+    {
+      "text": "resilience",
+      "attribution": "recovering quickly from difficulty"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "id": "family",
+  "label": "Family Dates (Example)",
+  "type": "family",
+  "config": {
+    "banner_enabled": true,
+    "lead_days": 3,
+    "lead_days_max": 14,
+    "show_birthday_age": false,
+    "show_anniversary_years": true
+  },
+  "items": [
+    {
+      "date": "01-31",
+      "text": "Someone's Birthday",
+      "year": 2001,
+      "kind": "birthday"
+    },
+    {
+      "date": "08-23",
+      "text": "Anniversary",
+      "year": 1997,
+      "kind": "anniversary"
+    }
+  ]
+}

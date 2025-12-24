@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Family Dates</title>
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static',filename='styles/main.css') }}">
+    <script src="{{ url_for('static', filename='scripts/response_modal.js') }}"></script>
+    <style>
+        .editor-grid {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 16px;
+            height: 100%;
+            overflow: hidden;
+        }
+        .panel {
+            border: 1px solid #dddddd;
+            border-radius: 10px;
+            padding: 12px;
+            background: #fff;
+            overflow: auto;
+        }
+        .panel h2 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        .hint {
+            font-size: 0.9em;
+            opacity: 0.8;
+            margin-top: 6px;
+            line-height: 1.3;
+        }
+        .action-button {
+            padding: 10px 14px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 700;
+            background-color: #2c66b1;
+            color: #fff;
+        }
+        .action-button.secondary {
+            background-color: #f4f4f9;
+            color: #333;
+            border: 1px solid #ddd;
+        }
+        .button-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            border-bottom: 1px solid #eee;
+            padding: 8px 6px;
+            vertical-align: middle;
+            text-align: left;
+        }
+        th {
+            font-size: 0.9rem;
+            opacity: 0.85;
+        }
+        input.form-input, select.form-input {
+            width: 100%;
+            min-width: 80px;
+        }
+        .row-actions {
+            display: flex;
+            gap: 6px;
+            justify-content: flex-end;
+        }
+        .small-btn {
+            padding: 6px 10px;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            background: #fff;
+            cursor: pointer;
+        }
+        .small-btn.danger {
+            border-color: #f2b1b1;
+            background: #fff5f5;
+        }
+        .preview-box {
+            border: 1px dashed #ccc;
+            padding: 10px;
+            border-radius: 8px;
+            background: #fafafa;
+            margin-top: 10px;
+        }
+        @media (max-width: 900px) {
+            .editor-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="frame">
+        <button onclick="history.back()" class="back-button">← Back</button>
+        <div class="app-header">
+            <div class="header-content">
+                <div class="title-container">
+                    <h1 class="app-title">Family Dates</h1>
+                </div>
+            </div>
+        </div>
+        <div class="separator"></div>
+
+        <div class="editor-grid">
+            <div class="panel">
+                <h2>Banner</h2>
+                <div class="form-group nowrap">
+                    <label class="form-label" for="bannerEnabled">Enabled</label>
+                    <input type="checkbox" id="bannerEnabled">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="leadDays">Lead Days</label>
+                    <input class="form-input" type="number" id="leadDays" min="0" step="1">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="leadDaysMax">Lead Days Max (for testing)</label>
+                    <input class="form-input" type="number" id="leadDaysMax" min="0" step="1">
+                </div>
+                <div class="form-group nowrap">
+                    <label class="form-label" for="showBirthdayAge">Show Birthday Age</label>
+                    <input type="checkbox" id="showBirthdayAge">
+                </div>
+                <div class="form-group nowrap">
+                    <label class="form-label" for="showAnniversaryYears">Show Anniversary Years</label>
+                    <input type="checkbox" id="showAnniversaryYears">
+                </div>
+                <div class="hint">
+                    This page edits the local JSON file only. If you set the same options in <code>.env</code>, the environment values override.
+                </div>
+                <div class="separator"></div>
+
+                <h2>Preview</h2>
+                <div class="form-group">
+                    <label class="form-label" for="previewDate">Preview Date (optional)</label>
+                    <input class="form-input" type="date" id="previewDate">
+                </div>
+                <div class="button-row">
+                    <button class="action-button secondary" type="button" id="refreshPreview">Preview</button>
+                </div>
+                <div class="preview-box" id="previewBox">
+                    <div style="font-weight: 700;" id="previewHeadline">Loading…</div>
+                    <div style="opacity: 0.85; margin-top: 4px;" id="previewDetail"></div>
+                    <div class="hint" id="previewMeta"></div>
+                </div>
+                <div class="hint">
+                    File: <code id="familyPath"></code>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h2>Dates</h2>
+                <div class="hint">Tip: use <code>MM-DD</code> (e.g. <code>01-31</code>).</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 95px;">Date</th>
+                            <th>Name / Label</th>
+                            <th style="width: 120px;">Kind</th>
+                            <th style="width: 90px;">Year</th>
+                            <th style="width: 120px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="rows"></tbody>
+                </table>
+                <div class="button-row">
+                    <button class="action-button secondary" type="button" id="addRow">Add Row</button>
+                    <button class="action-button" type="button" id="saveAll">Save</button>
+                </div>
+                <div class="hint" style="margin-top: 10px;">
+                    After saving, the banner will show on the next refresh cycle (or use Telegram /refresh).
+                </div>
+            </div>
+        </div>
+
+        {% include "response_modal.html" %}
+    </div>
+
+    <script>
+        let state = { path: '', config: {}, items: [] };
+
+        function byId(id) { return document.getElementById(id); }
+
+        function rowTemplate(item) {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><input class="form-input" placeholder="MM-DD" value="${item.date || ''}"></td>
+                <td><input class="form-input" placeholder="Christina" value="${(item.text || '').replaceAll('"','&quot;')}"></td>
+                <td>
+                    <select class="form-input">
+                        <option value="birthday">birthday</option>
+                        <option value="anniversary">anniversary</option>
+                    </select>
+                </td>
+                <td><input class="form-input" placeholder="2001" value="${item.year ?? ''}" inputmode="numeric"></td>
+                <td class="row-actions">
+                    <button class="small-btn danger" type="button">Delete</button>
+                </td>
+            `;
+            const kindSelect = tr.querySelector('select');
+            kindSelect.value = item.kind || 'birthday';
+            tr.querySelector('button').addEventListener('click', () => {
+                tr.remove();
+            });
+            return tr;
+        }
+
+        function render() {
+            byId('familyPath').textContent = state.path || '';
+            byId('bannerEnabled').checked = state.config.banner_enabled !== false;
+            byId('leadDays').value = state.config.lead_days ?? 3;
+            byId('leadDaysMax').value = state.config.lead_days_max ?? 14;
+            byId('showBirthdayAge').checked = !!state.config.show_birthday_age;
+            byId('showAnniversaryYears').checked = state.config.show_anniversary_years !== false;
+
+            const tbody = byId('rows');
+            tbody.innerHTML = '';
+            (state.items || []).forEach(item => tbody.appendChild(rowTemplate(item)));
+        }
+
+        function collect() {
+            const tbody = byId('rows');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            const items = rows.map(tr => {
+                const inputs = tr.querySelectorAll('input');
+                const date = (inputs[0].value || '').trim();
+                const text = (inputs[1].value || '').trim();
+                const kind = tr.querySelector('select').value;
+                const yearRaw = (inputs[2].value || '').trim();
+                const year = yearRaw ? parseInt(yearRaw, 10) : null;
+                return { date, text, kind, year: Number.isFinite(year) ? year : null };
+            });
+
+            const config = {
+                banner_enabled: !!byId('bannerEnabled').checked,
+                lead_days: parseInt(byId('leadDays').value || '3', 10),
+                lead_days_max: parseInt(byId('leadDaysMax').value || '14', 10),
+                show_birthday_age: !!byId('showBirthdayAge').checked,
+                show_anniversary_years: !!byId('showAnniversaryYears').checked,
+            };
+
+            return { config, items };
+        }
+
+        function setPreview(preview, meta) {
+            byId('previewHeadline').textContent = (preview && preview.headline) ? preview.headline : 'No banner for that date.';
+            byId('previewDetail').textContent = (preview && preview.detail) ? preview.detail : '';
+            byId('previewMeta').textContent = meta || '';
+        }
+
+        async function loadInitial() {
+            const res = await fetch('/api/family_dates');
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to load family dates.');
+            state.path = data.path;
+            state.config = data.config || {};
+            state.items = data.items || [];
+            render();
+            setPreview(data.preview, `Timezone: ${data.timezone || 'UTC'}`);
+        }
+
+        async function saveAll() {
+            const payload = collect();
+            const res = await fetch('/api/family_dates', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Save failed.');
+            showResponseModal('success', data.message || 'Saved.');
+            await loadInitial();
+        }
+
+        async function refreshPreview() {
+            const date = (byId('previewDate').value || '').trim();
+            const url = date ? `/api/family_dates/preview?date=${encodeURIComponent(date)}` : '/api/family_dates/preview';
+            const res = await fetch(url);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Preview failed.');
+            setPreview(data.preview, `Preview timezone: ${data.timezone || 'UTC'} • ${data.now || ''}`);
+        }
+
+        byId('addRow').addEventListener('click', () => {
+            byId('rows').appendChild(rowTemplate({ date: '', text: '', kind: 'birthday', year: null }));
+        });
+
+        byId('saveAll').addEventListener('click', () => {
+            saveAll().catch(err => showResponseModal('failure', err.message || String(err)));
+        });
+
+        byId('refreshPreview').addEventListener('click', () => {
+            refreshPreview().catch(err => showResponseModal('failure', err.message || String(err)));
+        });
+
+        loadInitial().catch(err => showResponseModal('failure', err.message || String(err)));
+    </script>
+</body>
+</html>

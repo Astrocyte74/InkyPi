@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "entries": [
+    {
+      "id": "inspiration",
+      "source": "inspiration.json"
+    },
+    {
+      "id": "jane_austen",
+      "source": "jane_austen.json"
+    },
+    {
+      "id": "word_of_day",
+      "source": "word_of_day.json"
+    },
+    {
+      "id": "movie_notting_hill",
+      "source": "movie_notting_hill.json"
+    },
+    {
+      "id": "family",
+      "source": "/usr/local/inkypi/family_dates.json"
+    },
+    {
+      "id": "lds_quotes",
+      "type": "group",
+      "label": "LDS Quotes…",
+      "source": "LDS_quote_categories.json"
+    }
+  ]
+}

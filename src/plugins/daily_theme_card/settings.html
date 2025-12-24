@@ -47,34 +47,10 @@
 </div>
 
 <div class="form-group">
-    <label for="holidayTheming" class="form-label">Holiday Theming:</label>
-    <select id="holidayTheming" name="holidayTheming" class="form-input">
-        <option value="off">Off</option>
-        <option value="on">On</option>
-    </select>
-    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
-        When enabled, the daily background prompt adds subtle touches for the nearest holiday (no text in the artwork).
-    </div>
-</div>
-
-<div class="form-group">
-    <label for="holidayRegion" class="form-label">Holiday Region:</label>
-    <select id="holidayRegion" name="holidayRegion" class="form-input">
-        <option value="ca_ab">Canada (Alberta)</option>
-        <option value="us">United States</option>
-    </select>
-</div>
-
-<div class="form-group">
-    <label for="holidayWindowDays" class="form-label">Holiday Window (days):</label>
-    <input type="number" id="holidayWindowDays" name="holidayWindowDays" min="0" max="60" step="1" class="form-input" value="14">
-</div>
-
-<div class="form-group">
-    <label for="dailyRefreshTime" class="form-label">New Image Time (local):</label>
+    <label for="dailyRefreshTime" class="form-label">New Card Time (local):</label>
     <input id="dailyRefreshTime" class="time-input" type="time" name="dailyRefreshTime" step="300">
     <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
-        Regenerates the background once per day at this time; weather overlay can refresh more frequently.
+        Picks a new card once per day at this time; weather overlay can refresh more frequently.
     </div>
 </div>
 
@@ -87,47 +63,33 @@
 </div>
 
 <div class="form-group">
-    <label for="imageModel" class="form-label">Gemini Image Model:</label>
-    <select id="imageModel" name="imageModel" class="form-input">
-        <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image</option>
-        <option value="gemini-3-pro-image-preview">Gemini 3 Pro Image (Preview)</option>
-    </select>
-</div>
-
-<div class="form-group">
-    <label for="imageTheme" class="form-label">Illustration Theme:</label>
-    <select id="imageTheme" name="imageTheme" class="form-input">
-        {% if image_themes %}
-            {% for theme in image_themes %}
-                <option value="{{ theme.id }}">{{ theme.label }}</option>
+    <label for="cardRoot" class="form-label">Daily Card:</label>
+    <select id="cardRoot" class="form-input">
+        {% if card_leaf_choices %}
+            {% for card in card_leaf_choices %}
+                <option value="{{ card.id }}">{{ card.label }}</option>
             {% endfor %}
         {% else %}
-            <option value="storybook">Storybook</option>
+            <option value="inspiration">Inspirational Quote</option>
+        {% endif %}
+        {% if card_groups %}
+            {% for group in card_groups %}
+                <option value="group:{{ group.id }}">{{ group.label }}</option>
+            {% endfor %}
         {% endif %}
     </select>
-    <a href="{{ url_for('themes.daily_cat_weather_editor') }}" class="action-button compact" style="text-decoration: none;">
-        Manage Themes
-    </a>
+    <input type="hidden" id="cardId" name="cardId" />
     <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
-        Changes the art direction and (optionally) the subject for the daily background (no text in the artwork).
+        Card sources are defined in <code>src/plugins/daily_theme_card/cards.json</code> (which references other JSON files).
+    </div>
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Tip: when adding multiple instances to a playlist, name them <code>card1</code>, <code>card2</code>, <code>card3</code> so Telegram commands like <code>/card1</code> map cleanly.
     </div>
 </div>
 
-<div class="form-group">
-    <label for="quality" class="form-label">Quality:</label>
-    <select id="quality" name="quality" class="form-input">
-        <option value="1k">1K</option>
-        <option value="2k">2K</option>
-        <option value="4k">4K</option>
-    </select>
-</div>
-
-<div class="form-group">
-    <label for="cacheId" class="form-label">Cache ID:</label>
-    <input type="text" id="cacheId" name="cacheId" placeholder="default" class="form-input">
-    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
-        Change this if you want a fresh background today without waiting for tomorrow.
-    </div>
+<div class="form-group" id="cardGroupContainer" style="display: none;">
+    <label for="cardGroupId" class="form-label">Category:</label>
+    <select id="cardGroupId" class="form-input"></select>
 </div>
 
 <div id="mapModal" class="modal">
@@ -142,7 +104,6 @@
 
 <script>
     document.addEventListener('DOMContentLoaded', () => {
-
         const OSM_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
         const $latitude = document.querySelector('#latitude');
         const $longitude = document.querySelector('#longitude');
@@ -155,7 +116,7 @@
         const $saveCurrentLocation = document.querySelector('#saveCurrentLocation');
         const $deleteSavedLocation = document.querySelector('#deleteSavedLocation');
 
-        const STORAGE_KEY = 'inkypi.daily_cat_weather.saved_locations';
+        const STORAGE_KEY = 'inkypi.daily_theme_card.saved_locations';
 
         let map, marker;
 
@@ -225,34 +186,46 @@
 
         function applyLocation(loc) {
             if (!loc) return;
-            $latitude.value = loc.lat.toFixed(6);
-            $longitude.value = loc.lon.toFixed(6);
-            if ($locationLabel && $locationLabel.value.trim() === '') {
-                $locationLabel.value = loc.label;
+            $latitude.value = Number(loc.lat).toFixed(6);
+            $longitude.value = Number(loc.lon).toFixed(6);
+            if ($locationLabel && (!$locationLabel.value || !$locationLabel.value.trim())) {
+                $locationLabel.value = (loc.label || '').toString();
             }
         }
 
-        $openMap.addEventListener('click', () => {
-            openModal('mapModal')
-            setTimeout(() => {
-                const coords = currentCoords();
-                const lat = coords.lat ?? 51.0;
-                const lon = coords.lon ?? -114.0;
-                const z = coords.lat !== null && coords.lon !== null ? 11 : 2.5;
+        function ensureMap() {
+            if (map) return;
 
-                if (!map) {
-                    map = L.map('map').setView([lat, lon], z);
-                    L.tileLayer(OSM_TILE_URL).addTo(map);
-                    marker = L.marker([lat, lon], { draggable: true }).addTo(map);
-                    map.on('click', event => marker.setLatLng(event.latlng));
-                } else {
-                    map.setView([lat, lon], z);
-                    if (marker) {
-                        marker.setLatLng([lat, lon]);
-                    } else {
-                        marker = L.marker([lat, lon], { draggable: true }).addTo(map);
-                    }
-                }
+            const coords = currentCoords();
+            const initLat = coords.lat ?? 51.048615;
+            const initLon = coords.lon ?? -114.070846;
+            const initZoom = coords.lat !== null && coords.lon !== null ? 10 : 4;
+
+            map = L.map('map').setView([initLat, initLon], initZoom);
+            L.tileLayer(OSM_TILE_URL, {
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(map);
+
+            marker = L.marker([initLat, initLon], { draggable: true }).addTo(map);
+            marker.on('dragend', () => {
+                const position = marker.getLatLng().wrap();
+                $latitude.value = position.lat.toFixed(6);
+                $longitude.value = position.lng.toFixed(6);
+            });
+
+            map.on('click', (event) => {
+                const position = event.latlng.wrap();
+                marker.setLatLng(position);
+                $latitude.value = position.lat.toFixed(6);
+                $longitude.value = position.lng.toFixed(6);
+            });
+        }
+
+        $openMap.addEventListener('click', () => {
+            openModal('mapModal');
+            ensureMap();
+            setTimeout(() => {
+                try { map.invalidateSize(); } catch (e) { /* ignore */ }
             }, 100);
         });
 
@@ -294,33 +267,111 @@
             renderSavedLocations();
         });
 
+        const CARD_GROUPS = {{ (card_groups or []) | tojson }};
+
+        const $cardRoot = document.getElementById('cardRoot');
+        const $cardId = document.getElementById('cardId');
+        const $cardGroupContainer = document.getElementById('cardGroupContainer');
+        const $cardGroupId = document.getElementById('cardGroupId');
+
+        function findGroupById(groupId) {
+            return (CARD_GROUPS || []).find(g => (g.id || '') === groupId);
+        }
+
+        function findGroupForCardId(cardId) {
+            const target = (cardId || '').toString().toLowerCase();
+            for (const group of (CARD_GROUPS || [])) {
+                for (const child of (group.children || [])) {
+                    if ((child.id || '').toString().toLowerCase() === target) {
+                        return group;
+                    }
+                }
+            }
+            return null;
+        }
+
+        function renderGroupChildren(group, selectedCardId) {
+            const selected = (selectedCardId || '').toString().toLowerCase();
+            $cardGroupId.innerHTML = '';
+
+            const children = (group && group.children) ? group.children : [];
+            children.forEach(child => {
+                const opt = document.createElement('option');
+                opt.value = (child.id || '').toString().toLowerCase();
+                opt.textContent = child.label || child.id;
+                $cardGroupId.appendChild(opt);
+            });
+
+            if (children.length) {
+                $cardGroupId.value = selected && children.some(c => (c.id || '').toLowerCase() === selected)
+                    ? selected
+                    : (children[0].id || '').toLowerCase();
+            }
+        }
+
+        function showGroupPicker(groupId, selectedCardId) {
+            const group = findGroupById(groupId);
+            if (!group) {
+                $cardGroupContainer.style.display = 'none';
+                return;
+            }
+            renderGroupChildren(group, selectedCardId);
+            $cardGroupContainer.style.display = '';
+            $cardId.value = ($cardGroupId.value || '').toString().toLowerCase();
+        }
+
+        function hideGroupPicker() {
+            $cardGroupContainer.style.display = 'none';
+            $cardGroupId.innerHTML = '';
+        }
+
+        function syncFromCardId() {
+            const current = ($cardId.value || '').toString().toLowerCase() || 'inspiration';
+            const group = findGroupForCardId(current);
+            if (group) {
+                $cardRoot.value = `group:${group.id}`;
+                showGroupPicker(group.id, current);
+                return;
+            }
+            hideGroupPicker();
+            const hasLeaf = Array.from($cardRoot.options || []).some(opt => (opt.value || '').toString().toLowerCase() === current);
+            const fallback = hasLeaf ? current : 'inspiration';
+            $cardRoot.value = fallback;
+            $cardId.value = fallback;
+        }
+
+        $cardRoot.addEventListener('change', () => {
+            const value = ($cardRoot.value || '').toString();
+            if (value.startsWith('group:')) {
+                const groupId = value.slice('group:'.length);
+                showGroupPicker(groupId, $cardId.value);
+                return;
+            }
+            hideGroupPicker();
+            $cardId.value = value.toLowerCase();
+        });
+
+        $cardGroupId.addEventListener('change', () => {
+            $cardId.value = ($cardGroupId.value || '').toString().toLowerCase();
+        });
+
         if (loadPluginSettings) {
-            document.getElementById('latitude').value = pluginSettings.latitude;
-            document.getElementById('longitude').value = pluginSettings.longitude;
+            document.getElementById('latitude').value = pluginSettings.latitude || '';
+            document.getElementById('longitude').value = pluginSettings.longitude || '';
             document.getElementById('locationLabel').value = pluginSettings.locationLabel || '';
             document.getElementById('units').value = pluginSettings.units || 'metric';
-            document.getElementById('holidayTheming').value = (pluginSettings.holidayTheming || 'off').toLowerCase();
-            document.getElementById('holidayRegion').value = (pluginSettings.holidayRegion || 'ca_ab').toLowerCase();
-            document.getElementById('holidayWindowDays').value = pluginSettings.holidayWindowDays || '14';
             document.getElementById('dailyRefreshTime').value = pluginSettings.dailyRefreshTime || '04:00';
             document.getElementById('forecastDays').value = pluginSettings.forecastDays || '3';
-            document.getElementById('imageModel').value = pluginSettings.imageModel || 'gemini-2.5-flash-image';
-            document.getElementById('imageTheme').value = (pluginSettings.imageTheme || 'storybook').toLowerCase();
-            document.getElementById('quality').value = (pluginSettings.quality || '2k').toLowerCase();
-            document.getElementById('cacheId').value = pluginSettings.cacheId || 'default';
+            $cardId.value = (pluginSettings.cardId || 'inspiration').toLowerCase();
         } else {
             document.getElementById('locationLabel').value = '';
             document.getElementById('units').value = 'metric';
-            document.getElementById('holidayTheming').value = 'off';
-            document.getElementById('holidayRegion').value = 'ca_ab';
-            document.getElementById('holidayWindowDays').value = '14';
             document.getElementById('dailyRefreshTime').value = '04:00';
             document.getElementById('forecastDays').value = '3';
-            document.getElementById('imageModel').value = 'gemini-2.5-flash-image';
-            document.getElementById('imageTheme').value = 'storybook';
-            document.getElementById('quality').value = '2k';
-            document.getElementById('cacheId').value = 'default';
+            $cardId.value = 'inspiration';
         }
+
+        syncFromCardId();
 
         renderSavedLocations();
 

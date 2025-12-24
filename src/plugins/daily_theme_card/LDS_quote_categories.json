@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "categories": [
+    {
+      "id": "christmas_quotes",
+      "label": "Christmas Quotes (Local)",
+      "type": "quote",
+      "source": "lds_quotes/christmas_quotes.json"
+    },
+    {
+      "id": "jesus_christ",
+      "label": "LDS Quotations: Jesus Christ",
+      "type": "quote",
+      "source": "lds_quotes/jesus_christ.json"
+    },
+    {
+      "id": "happiness",
+      "label": "LDS Quotations: Happiness",
+      "type": "quote",
+      "source": "lds_quotes/happiness.json"
+    },
+    {
+      "id": "potential",
+      "label": "LDS Quotations: Potential",
+      "type": "quote",
+      "source": "lds_quotes/potential.json"
+    },
+    {
+      "id": "discipleship",
+      "label": "LDS Quotations: Discipleship",
+      "type": "quote",
+      "source": "lds_quotes/discipleship.json"
+    },
+    {
+      "id": "short",
+      "label": "LDS Quotations: Short Quotes",
+      "type": "quote",
+      "source": "lds_quotes/short.json"
+    },
+    {
+      "id": "personal_revelation",
+      "label": "LDS Quotations: Personal Revelation",
+      "type": "quote",
+      "source": "lds_quotes/personal_revelation.json"
+    },
+    {
+      "id": "hope",
+      "label": "LDS Quotations: Hope",
+      "type": "quote",
+      "source": "lds_quotes/hope.json"
+    }
+  ]
+}

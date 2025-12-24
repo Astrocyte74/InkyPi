@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "id": "jane_austen",
+  "label": "Jane Austen Quotes",
+  "type": "quote",
+  "items": [
+    {
+      "text": "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife.",
+      "attribution": "Pride and Prejudice"
+    },
+    {
+      "text": "The person, be it gentleman or lady, who has not pleasure in a good novel, must be intolerably stupid.",
+      "attribution": "Northanger Abbey"
+    },
+    {
+      "text": "To be fond of dancing was a certain step towards falling in love.",
+      "attribution": "Pride and Prejudice"
+    },
+    {
+      "text": "Laugh as much as you choose, but you will not laugh me out of my opinion.",
+      "attribution": "Pride and Prejudice"
+    },
+    {
+      "text": "Angry people are not always wise.",
+      "attribution": "Pride and Prejudice"
+    },
+    {
+      "text": "There are people, who the more you do for them, the less they will do for themselves.",
+      "attribution": "Emma"
+    },
+    {
+      "text": "It isn’t what we say or think that defines us, but what we do.",
+      "attribution": "Sense and Sensibility"
+    },
+    {
+      "text": "Without music, life would be a blank to me.",
+      "attribution": "Emma"
+    },
+    {
+      "text": "If I loved you less, I might be able to talk about it more.",
+      "attribution": "Emma"
+    }
+  ]
+}
