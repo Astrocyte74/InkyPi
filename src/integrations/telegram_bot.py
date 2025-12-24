@@ -2099,13 +2099,14 @@ class TelegramBotListener:
             theme_hint = ""
 
         system_content = (
-            "You rewrite user ideas into a single strong image-generation prompt for a children's book illustration. "
+            "You rewrite user ideas into a single strong image-generation prompt. "
             "Preserve the core idea and keep it playful and imaginative. Always include: "
-            "a larger-than-average (but not obese) orange-and-white cat (ginger tabby with a white chest and paws). "
+            "a larger-than-average (but not obese) orange-and-white cat (orange/ginger coat with a white chest and paws; no other fur colours). "
             "No text, no captions, no speech bubbles, no letters, no numbers. Not photorealistic. Full-bleed scene. "
             "Do not create panels, split layouts, frames, borders, dividers, or any weather widgets (thermometers/gauges/icons). "
             "Add composition, setting, mood, and a few concrete visual details without introducing new main subjects. "
             f"{theme_hint}"
+            "Follow the PRIMARY art direction above strictly. "
             "Keep under 60 words. Return only the refined prompt."
         )
         user_content = f"User idea: \"{user_prompt.strip()}\""

@@ -36,10 +36,10 @@ WEATHER_URL = (
 
 
 SPECTRA6_INSTRUCTIONS = (
-    "Generate a flat, high-contrast children's book illustration using only black, white, red, green, blue, "
-    "and yellow. The style must be poster-like with bold shapes, clean colour blocks, and no gradients or fine "
-    "textures. Avoid subtle shading, soft edges, or photographic detail. This image will be displayed on a "
-    "Spectra 6 e-ink panel with a limited colour gamut and slow refresh."
+    "Generate a flat, high-contrast illustration using only black, white, red, green, blue, and yellow. "
+    "Use bold shapes and clean colour blocks, with no gradients or fine textures. "
+    "Avoid subtle shading, soft edges, or photographic detail. "
+    "This image will be displayed on a Spectra 6 e-ink panel with a limited colour gamut and slow refresh."
 )
 
 
@@ -57,7 +57,7 @@ GEMINI_IMAGE_CONFIG_UNSUPPORTED_MODELS = {
     "models/gemini-3-pro-image-preview",
 }
 
-PROMPT_VERSION = 7
+PROMPT_VERSION = 8
 DEFAULT_CAT_DESCRIPTION = (
     "a larger-than-average (but not obese) orange-and-white cat (orange/ginger coat with white chest and paws; no other fur colours)"
 )
