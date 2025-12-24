@@ -44,7 +44,7 @@ def _parse_int(value: str | None, default: int) -> int:
 
 def _infer_kind(text: str, kind: str) -> str:
     kind = (kind or "").strip().lower()
-    if kind in {"birthday", "anniversary"}:
+    if kind in {"birthday", "anniversary", "holiday"}:
         return kind
     return "anniversary" if "anniversary" in (text or "").lower() else "birthday"
 
@@ -142,6 +142,8 @@ def _next_occurrence(mmdd: str, today: date) -> date | None:
 
 
 def _format_age_or_years(event: FamilyEvent, when: date, *, show_birthday_age: bool, show_anniversary_years: bool) -> str:
+    if event.kind == "holiday":
+        return ""
     if not event.year:
         return ""
 
@@ -207,7 +209,28 @@ def pick_family_banner(
     )
     count_suffix = f" ({count})" if count else ""
 
-    if event.kind == "anniversary":
+    if event.kind == "holiday":
+        subject = subject or "Holiday"
+        token = subject.lower()
+        emoji = "🎉"
+        if "christmas" in token or "xmas" in token:
+            emoji = "🎄"
+        elif "new year" in token:
+            emoji = "🎉"
+        elif "thanksgiving" in token:
+            emoji = "🦃"
+        elif "halloween" in token:
+            emoji = "🎃"
+        elif "easter" in token:
+            emoji = "🐣"
+
+        if delta == 0:
+            headline = f"{emoji} {subject} today!"
+        elif delta == 1:
+            headline = f"{emoji} {subject} is tomorrow"
+        else:
+            headline = f"{emoji} {delta} days until {subject}"
+    elif event.kind == "anniversary":
         emoji = "💍"
         label = f"{_possessive(subject)} Anniversary{count_suffix}".strip()
         if delta == 0:

@@ -292,7 +292,7 @@ def _validate_family_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if not date_str or not text:
             continue
         kind = str(item.get("kind") or "").strip().lower()
-        if kind not in {"birthday", "anniversary"}:
+        if kind not in {"birthday", "anniversary", "holiday"}:
             kind = "anniversary" if "anniversary" in text.lower() else "birthday"
         year = item.get("year")
         year_int = None
