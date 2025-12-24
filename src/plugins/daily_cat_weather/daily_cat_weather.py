@@ -907,51 +907,23 @@ class DailyCatWeather(BasePlugin):
             return panel
 
         remaining_h = panel_h - y - pad
-        row_h = max(64, int(remaining_h / max(1, forecast_days)))
-        row_icon = max(28, int(row_h * 0.55))
-        row_day_font = self._font("Jost", max(13, int(row_h * 0.24)), bold=True)
-        base_row_temp_font_size = max(13, int(row_h * 0.24))
-        row_temp_font = self._font("Jost", base_row_temp_font_size)
-        row_lh = max(_line_height(row_temp_font), _line_height(row_day_font))
-
-        precip_col_w = max(56, int(panel_w * 0.30))
-        precip_x0 = panel_w - pad - precip_col_w
-        precip_x1 = panel_w - pad
-        temp_x0 = pad + row_icon + gap
-        temp_x1 = precip_x0 - gap
-        temp_x1 = max(temp_x0 + 40, temp_x1)
-
-        day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        day_w_max = max((_text_size(d, row_day_font)[0] for d in day_labels), default=34)
-        day_col_w = max(day_w_max + gap, 34)
-
-        def _fit_row_font(text, max_width, start_size, min_size=10):
-            size = start_size
-            while size > min_size:
-                font = self._font("Jost", size)
-                if _text_size(text, font)[0] <= max_width:
-                    return font
-                size -= 1
-            return self._font("Jost", min_size)
-
-        def _draw_droplet_icon(x, y_mid, size, color):
-            r = max(1, int(size * 0.22))
-            body_h = max(2, int(size * 0.58))
-            top_y = y_mid - int(body_h / 2)
-            bottom_y = top_y + body_h
-            cx = x + int(size / 2)
-            draw.polygon([(cx, top_y), (x + size, bottom_y - r), (x, bottom_y - r)], fill=color)
-            draw.ellipse((x, bottom_y - 2 * r, x + 2 * r, bottom_y), fill=color)
-            draw.ellipse((x + size - 2 * r, bottom_y - 2 * r, x + size, bottom_y), fill=color)
+        min_row_h = 96 if forecast_days <= 3 else 72
+        row_h = max(min_row_h, int(remaining_h / max(1, forecast_days)))
+        row_pad = max(8, int(row_h * 0.12))
+        row_line_gap = max(6, int(row_pad * 0.7))
+        row_icon = max(34, int(row_h * 0.62))
+        row_day_font = self._font("Jost", max(15, int(row_h * 0.26)), bold=True)
+        row_info_font = self._font("Jost", max(13, int(row_h * 0.22)))
+        row_precip_font = row_info_font
+        day_lh = _line_height(row_day_font)
+        info_lh = _line_height(row_info_font)
+        precip_lh = _line_height(row_precip_font)
 
         for idx, day in enumerate(daily[:forecast_days]):
             row_y0 = y + idx * row_h
             row_y1 = min(panel_h - pad, row_y0 + row_h)
             if row_y0 >= panel_h - pad:
                 break
-
-            if idx:
-                draw.line((pad, row_y0, panel_w - pad, row_y0), fill=(0, 0, 0))
 
             dt = datetime.fromtimestamp(int((day or {}).get("dt", 0)), tz=timezone.utc).astimezone(tz)
             label = dt.strftime("%a")
@@ -972,31 +944,27 @@ class DailyCatWeather(BasePlugin):
                 pop = 0
 
             icon_img = self._simple_weather_icon(icon_code, size=row_icon).convert("RGBA")
-            icon_y = row_y0 + int((row_h - row_icon) / 2)
+            icon_y = row_y0 + row_pad
             panel.paste(icon_img, (pad, icon_y), icon_img)
 
-            row_text_y = row_y0 + int((row_h - row_lh) / 2)
-            draw.text((temp_x0, row_text_y), label, fill=(0, 0, 0), font=row_day_font)
+            text_x = pad + row_icon + gap
+            max_text_w = panel_w - pad - text_x
+            max_text_w = max(30, max_text_w)
 
-            temps_area_left = temp_x0 + day_col_w
-            temps_area_right = temp_x1
-            temps_max_w = max(10, temps_area_right - temps_area_left)
-            temps_line = f"{high}°/{low}°"
-            if _text_size(temps_line, row_temp_font)[0] > temps_max_w:
-                temps_line = f"{high}/{low}"
-            temps_font = _fit_row_font(temps_line, temps_max_w, base_row_temp_font_size, min_size=10)
-            draw.text((temps_area_left, row_text_y), temps_line, fill=(0, 0, 0), font=temps_font)
+            y_cursor = row_y0 + row_pad
+            draw.text((text_x, y_cursor), label, fill=(0, 0, 0), font=row_day_font)
+            y_cursor += day_lh + row_line_gap
 
-            precip_line = f"{pop}%"
-            pw, _ = _text_size(precip_line, temps_font)
-            drop_size = max(10, int(row_lh * 0.58))
-            group_gap = max(3, int(gap * 0.25))
-            group_w = drop_size + group_gap + pw
-            group_x0 = max(precip_x0, precip_x1 - group_w)
-            drop_x = group_x0
-            precip_x = drop_x + drop_size + group_gap
-            _draw_droplet_icon(drop_x, row_text_y + int(row_lh / 2), drop_size, icon_accent)
-            draw.text((precip_x, row_text_y), precip_line, fill=(0, 0, 0), font=temps_font)
+            temps_line = f"H: {_format_degree(high)}  L: {_format_degree(low)}"
+            draw.text((text_x, y_cursor), temps_line, fill=(0, 0, 0), font=row_info_font)
+            y_cursor += info_lh + row_line_gap
+
+            precip_line = f"Precip: {pop}%"
+            draw.text((text_x, y_cursor), precip_line, fill=(0, 0, 0), font=row_precip_font)
+            y_cursor += precip_lh
+
+            if idx < forecast_days - 1:
+                draw.line((pad, row_y1, panel_w - pad, row_y1), fill=(0, 0, 0))
 
         return panel
 
