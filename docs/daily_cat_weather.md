@@ -15,6 +15,7 @@ See `docs/api_keys.md` for `.env` setup.
 
 1. In the Web UI, open the `Daily Cat Weather` plugin and configure:
    - Location (lat/lon)
+   - Optional `Location Label` (e.g. `Carstairs, AB`) to show at the top of the sidebar
    - Units
    - `New Image Time` = `04:00` (local time)
    - `Forecast Days` = `3`

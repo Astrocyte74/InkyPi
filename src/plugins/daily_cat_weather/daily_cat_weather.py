@@ -107,6 +107,8 @@ class DailyCatWeather(BasePlugin):
         if not lat or not lon:
             raise RuntimeError("Latitude and Longitude are required.")
 
+        location_label = (settings.get("locationLabel") or "").strip()
+
         units = (settings.get("units") or "metric").strip().lower()
         if units not in {"metric", "imperial", "standard"}:
             raise RuntimeError("Units must be one of metric, imperial, or standard.")
@@ -259,7 +261,7 @@ class DailyCatWeather(BasePlugin):
 
         canvas = Image.new("RGB", (width, height), (255, 255, 255))
         canvas.paste(background, (0, 0))
-        panel = self._render_weather_sidebar_panel(weather, tz, forecast_days, sidebar_size_px)
+        panel = self._render_weather_sidebar_panel(weather, tz, forecast_days, sidebar_size_px, location_label)
         canvas.paste(panel, (image_width, 0))
         return canvas
 
@@ -750,7 +752,7 @@ class DailyCatWeather(BasePlugin):
             return "landscape, wide"
         return "landscape, near-square"
 
-    def _render_weather_sidebar_panel(self, weather, tz, forecast_days, sidebar_size):
+    def _render_weather_sidebar_panel(self, weather, tz, forecast_days, sidebar_size, location_label=""):
         panel_w, panel_h = sidebar_size
         panel = Image.new("RGB", (panel_w, panel_h), (255, 255, 255))
         draw = ImageDraw.Draw(panel)
@@ -809,8 +811,11 @@ class DailyCatWeather(BasePlugin):
         gap = max(6, int(pad * 0.5))
 
         title_font = self._font("Jost", max(14, int(panel_w * 0.085)), bold=True)
-        base_temp_font_size = max(18, int(panel_w * 0.18))
+        base_temp_font_size = max(18, int(panel_w * 0.16))
         small_font = self._font("Jost", max(12, int(panel_w * 0.065)))
+        location_font = self._font("Jost", max(12, int(panel_w * 0.070)))
+        text_secondary = (0, 0, 0)
+        icon_accent = (0, 0, 0, 255)
 
         y = pad
         if not weather:
@@ -818,17 +823,21 @@ class DailyCatWeather(BasePlugin):
             draw.text((pad, y + int(pad * 1.4)), "Unavailable", fill=(0, 0, 0), font=small_font)
             return panel
 
+        if location_label:
+            draw.text((pad, y), location_label, fill=text_secondary, font=location_font)
+            y += _line_height(location_font) + int(gap * 0.8)
+
         temp_value = round(weather.current_temp)
         feels_value = round(weather.feels_like)
         temp_unit = "°C" if weather.units == "metric" else ("°F" if weather.units == "imperial" else "K")
         desc = (weather.description or "").strip().capitalize()
 
         icon_size = max(40, int(panel_w * 0.22))
-        icon = self._load_icon(self._weather_icon_path(weather.icon), size=icon_size).convert("RGB")
+        icon = self._simple_weather_icon(weather.icon, size=icon_size).convert("RGBA")
 
         icon_x = pad
         icon_y = y
-        panel.paste(icon, (icon_x, icon_y))
+        panel.paste(icon, (icon_x, icon_y), icon)
 
         text_x = icon_x + icon_size + gap
         max_text_w = panel_w - pad - text_x
@@ -845,31 +854,28 @@ class DailyCatWeather(BasePlugin):
 
         small_lh = _line_height(small_font)
         line_gap = max(6, int(small_lh * 0.35))
-        after_label_gap = max(6, int(small_lh * 0.25))
         y_cursor = icon_y
-
-        draw.text((text_x, y_cursor), "Now", fill=(0, 0, 0), font=small_font)
-        y_cursor += small_lh + after_label_gap
 
         temp_font = _fit_font(f"{temp_value}{temp_unit}", max_text_w, base_temp_font_size, min_size=14)
         temp_lh = _line_height(temp_font)
-        after_temp_gap = max(line_gap + 4, int(temp_lh * 0.18))
-        draw.text((text_x, y_cursor), f"{temp_value}{temp_unit}", fill=(0, 0, 0), font=temp_font)
-        y_cursor += temp_lh + after_temp_gap
+        temp_y = icon_y + max(0, int((icon_size - temp_lh) / 2))
+        draw.text((text_x, temp_y), f"{temp_value}{temp_unit}", fill=(0, 0, 0), font=temp_font)
 
-        feels_line = f"Feels {feels_value}{temp_unit}"
-        draw.text((text_x, y_cursor), feels_line, fill=(0, 0, 0), font=small_font)
-        y_cursor += small_lh + line_gap
+        y_cursor = icon_y + max(icon_size, (temp_y - icon_y) + temp_lh) + int(gap * 0.7)
 
         if desc:
             for line in _wrap_text(desc, small_font, max_text_w, max_lines=2):
                 draw.text((text_x, y_cursor), line, fill=(0, 0, 0), font=small_font)
                 y_cursor += small_lh + int(line_gap * 0.9)
 
-        header_h = max(icon_size, y_cursor - icon_y)
-        y = icon_y + header_h + pad
+        feels_line = f"Feels like {feels_value}{temp_unit}"
+        draw.text((text_x, y_cursor), feels_line, fill=text_secondary, font=small_font)
+        y_cursor += small_lh + line_gap
 
-        y += int(pad * 0.4)
+        header_h = max(icon_size, y_cursor - icon_y)
+        divider_y = icon_y + header_h + int(pad * 0.7)
+        draw.line((pad, divider_y, panel_w - pad, divider_y), fill=(0, 0, 0))
+        y = divider_y + int(pad * 0.7)
 
         daily = weather.daily[1 : 1 + forecast_days] if weather.daily else []
         if not daily:
@@ -877,18 +883,32 @@ class DailyCatWeather(BasePlugin):
             return panel
 
         remaining_h = panel_h - y - pad
-        row_h = max(70, int(remaining_h / max(1, forecast_days)))
-        row_pad = max(6, int(row_h * 0.12))
-        row_icon = max(30, int(row_h * 0.50))
-        row_day_font = self._font("Jost", max(14, int(row_h * 0.22)), bold=True)
+        row_h = max(64, int(remaining_h / max(1, forecast_days)))
+        row_icon = max(28, int(row_h * 0.55))
+        row_day_font = self._font("Jost", max(13, int(row_h * 0.24)), bold=True)
         row_temp_font = self._font("Jost", max(12, int(row_h * 0.20)))
+        row_lh = _line_height(row_temp_font)
 
-        precip_col_w = max(54, int(panel_w * 0.30))
+        precip_col_w = max(56, int(panel_w * 0.30))
         precip_x0 = panel_w - pad - precip_col_w
         precip_x1 = panel_w - pad
         temp_x0 = pad + row_icon + gap
         temp_x1 = precip_x0 - gap
         temp_x1 = max(temp_x0 + 40, temp_x1)
+
+        day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        day_w_max = max((_text_size(d, row_day_font)[0] for d in day_labels), default=34)
+        day_col_w = min(max(day_w_max + gap, 34), max(34, int((temp_x1 - temp_x0) * 0.45)))
+
+        def _draw_droplet_icon(x, y_mid, size, color):
+            r = max(1, int(size * 0.22))
+            body_h = max(2, int(size * 0.58))
+            top_y = y_mid - int(body_h / 2)
+            bottom_y = top_y + body_h
+            cx = x + int(size / 2)
+            draw.polygon([(cx, top_y), (x + size, bottom_y - r), (x, bottom_y - r)], fill=color)
+            draw.ellipse((x, bottom_y - 2 * r, x + 2 * r, bottom_y), fill=color)
+            draw.ellipse((x + size - 2 * r, bottom_y - 2 * r, x + size, bottom_y), fill=color)
 
         for idx, day in enumerate(daily[:forecast_days]):
             row_y0 = y + idx * row_h
@@ -917,27 +937,126 @@ class DailyCatWeather(BasePlugin):
             except (TypeError, ValueError):
                 pop = 0
 
-            icon_img = self._load_icon(self._weather_icon_path(icon_code), size=row_icon).convert("RGB")
+            icon_img = self._simple_weather_icon(icon_code, size=row_icon).convert("RGBA")
             icon_y = row_y0 + int((row_h - row_icon) / 2)
-            panel.paste(icon_img, (pad, icon_y))
+            panel.paste(icon_img, (pad, icon_y), icon_img)
 
-            day_y = row_y0 + row_pad
-            draw.text((temp_x0, day_y), label, fill=(0, 0, 0), font=row_day_font)
+            row_text_y = row_y0 + int((row_h - row_lh) / 2)
+            draw.text((temp_x0, row_text_y), label, fill=(0, 0, 0), font=row_day_font)
 
-            temps_line = f"H {high}  L {low}"
-            if _text_size(temps_line, row_temp_font)[0] > (temp_x1 - temp_x0):
-                temps_line = f"{high}°/{low}°"
-            temps_y = day_y + _text_size(label, row_day_font)[1] + int(row_pad * 0.35)
-            temps_y = min(temps_y, row_y1 - row_pad - _text_size(temps_line, row_temp_font)[1])
-            draw.text((temp_x0, temps_y), temps_line, fill=(0, 0, 0), font=row_temp_font)
+            temps_line = f"{high}°/{low}°"
+            if _text_size(temps_line, row_temp_font)[0] > (temp_x1 - (temp_x0 + day_col_w)):
+                temps_line = f"{high}/{low}"
+            temps_x = temp_x0 + day_col_w
+            draw.text((temps_x, row_text_y), temps_line, fill=(0, 0, 0), font=row_temp_font)
 
             precip_line = f"{pop}%"
             pw, _ = _text_size(precip_line, row_temp_font)
-            precip_x = precip_x1 - pw
-            precip_y = temps_y
-            draw.text((precip_x, precip_y), precip_line, fill=(0, 0, 0), font=row_temp_font)
+            drop_size = max(10, int(row_lh * 0.60))
+            group_gap = max(3, int(gap * 0.25))
+            group_w = drop_size + group_gap + pw
+            group_x0 = max(precip_x0, precip_x1 - group_w)
+            drop_x = group_x0
+            precip_x = drop_x + drop_size + group_gap
+            _draw_droplet_icon(drop_x, row_text_y + int(row_lh / 2), drop_size, icon_accent)
+            draw.text((precip_x, row_text_y), precip_line, fill=(0, 0, 0), font=row_temp_font)
 
         return panel
+
+    @staticmethod
+    def _simple_weather_icon(icon_code, size):
+        code = str(icon_code or "01d").lower()
+        key = code[:2]
+
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        stroke = (35, 35, 35, 255)
+        fill_cloud = (245, 245, 245, 255)
+        fill_sun = (255, 220, 120, 255)
+        fill_rain = (60, 130, 220, 255)
+        width = max(2, int(size * 0.06))
+
+        def _cloud(x0, y0, w, h, outline=stroke, fill=fill_cloud):
+            r = int(min(w, h) * 0.35)
+            base_y = y0 + int(h * 0.55)
+            draw.rounded_rectangle((x0, base_y - r, x0 + w, y0 + h), radius=r, fill=fill, outline=outline, width=width)
+            draw.ellipse((x0 + int(w * 0.05), y0 + int(h * 0.20), x0 + int(w * 0.45), y0 + int(h * 0.75)), fill=fill, outline=outline, width=width)
+            draw.ellipse((x0 + int(w * 0.30), y0 + int(h * 0.05), x0 + int(w * 0.75), y0 + int(h * 0.80)), fill=fill, outline=outline, width=width)
+            draw.ellipse((x0 + int(w * 0.60), y0 + int(h * 0.25), x0 + int(w * 0.95), y0 + int(h * 0.78)), fill=fill, outline=outline, width=width)
+
+        def _sun(cx, cy, r):
+            draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=fill_sun, outline=stroke, width=width)
+            ray_len = int(r * 0.65)
+            for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (-1, 1), (1, -1)]:
+                x1 = cx + int(dx * (r + 2))
+                y1 = cy + int(dy * (r + 2))
+                x2 = cx + int(dx * (r + ray_len))
+                y2 = cy + int(dy * (r + ray_len))
+                draw.line((x1, y1, x2, y2), fill=stroke, width=width)
+
+        def _rain(x0, y0, w, h, drops=3):
+            for i in range(drops):
+                x = x0 + int((i + 0.5) * w / drops)
+                draw.line((x, y0, x - int(width * 0.4), y0 + h), fill=fill_rain, width=width)
+
+        def _snow(x0, y0, w, h):
+            for i in range(2):
+                x = x0 + int((i + 0.6) * w / 2)
+                y = y0 + int(h * 0.35) + i * int(h * 0.25)
+                r = int(width * 1.2)
+                draw.line((x - r, y, x + r, y), fill=fill_rain, width=max(1, int(width * 0.6)))
+                draw.line((x, y - r, x, y + r), fill=fill_rain, width=max(1, int(width * 0.6)))
+                draw.line((x - r, y - r, x + r, y + r), fill=fill_rain, width=max(1, int(width * 0.6)))
+                draw.line((x - r, y + r, x + r, y - r), fill=fill_rain, width=max(1, int(width * 0.6)))
+
+        def _mist(x0, y0, w, h):
+            line_w = max(1, int(width * 0.8))
+            for i in range(3):
+                yy = y0 + int((i + 1) * h / 4)
+                draw.line((x0, yy, x0 + w, yy), fill=(120, 120, 120, 255), width=line_w)
+
+        if key == "01":
+            _sun(int(size * 0.50), int(size * 0.50), int(size * 0.22))
+            return img
+
+        if key == "02":
+            _sun(int(size * 0.40), int(size * 0.38), int(size * 0.18))
+            _cloud(int(size * 0.18), int(size * 0.30), int(size * 0.70), int(size * 0.55))
+            return img
+
+        if key in {"03", "04"}:
+            _cloud(int(size * 0.12), int(size * 0.28), int(size * 0.76), int(size * 0.58))
+            return img
+
+        if key in {"09", "10"}:
+            _cloud(int(size * 0.12), int(size * 0.22), int(size * 0.76), int(size * 0.55))
+            _rain(int(size * 0.26), int(size * 0.62), int(size * 0.46), int(size * 0.25), drops=3)
+            return img
+
+        if key == "11":
+            _cloud(int(size * 0.12), int(size * 0.22), int(size * 0.76), int(size * 0.55))
+            bolt = [
+                (int(size * 0.55), int(size * 0.58)),
+                (int(size * 0.42), int(size * 0.92)),
+                (int(size * 0.58), int(size * 0.92)),
+                (int(size * 0.48), int(size * 1.08)),
+            ]
+            draw.polygon(bolt, fill=(255, 210, 80, 255))
+            draw.line(bolt + [bolt[0]], fill=stroke, width=max(1, int(width * 0.6)))
+            return img
+
+        if key == "13":
+            _cloud(int(size * 0.12), int(size * 0.22), int(size * 0.76), int(size * 0.55))
+            _snow(int(size * 0.22), int(size * 0.62), int(size * 0.56), int(size * 0.28))
+            return img
+
+        if key == "50":
+            _mist(int(size * 0.18), int(size * 0.28), int(size * 0.70), int(size * 0.55))
+            return img
+
+        _cloud(int(size * 0.12), int(size * 0.28), int(size * 0.76), int(size * 0.58))
+        return img
 
     @staticmethod
     def _weather_icon_path(icon_code):
