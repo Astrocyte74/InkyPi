@@ -908,21 +908,69 @@ class DailyCatWeather(BasePlugin):
 
         remaining_h = panel_h - y - pad
         min_row_h = 96 if forecast_days <= 3 else 72
-        row_h = max(min_row_h, int(remaining_h / max(1, forecast_days)))
-        row_pad = max(8, int(row_h * 0.12))
-        row_line_gap = max(6, int(row_pad * 0.7))
-        row_icon = max(34, int(row_h * 0.62))
-        row_day_font = self._font("Jost", max(15, int(row_h * 0.26)), bold=True)
-        row_info_font = self._font("Jost", max(13, int(row_h * 0.22)))
-        row_precip_font = row_info_font
-        day_lh = _line_height(row_day_font)
-        info_lh = _line_height(row_info_font)
-        precip_lh = _line_height(row_precip_font)
+        base_row_h = max(min_row_h, int(remaining_h / max(1, forecast_days)))
+
+        def _layout_forecast(scale=1.0):
+            row_pad = max(6, int(base_row_h * 0.12 * scale))
+            row_line_gap = max(5, int(row_pad * 0.7))
+            row_icon = max(28, int(base_row_h * 0.62 * scale))
+            row_day_font = self._font("Jost", max(13, int(base_row_h * 0.26 * scale)), bold=True)
+            row_info_font = self._font("Jost", max(12, int(base_row_h * 0.22 * scale)))
+            row_precip_font = row_info_font
+
+            day_lh = _line_height(row_day_font)
+            info_lh = _line_height(row_info_font)
+            precip_lh = _line_height(row_precip_font)
+
+            return {
+                "row_pad": row_pad,
+                "row_line_gap": row_line_gap,
+                "row_icon": row_icon,
+                "row_day_font": row_day_font,
+                "row_info_font": row_info_font,
+                "row_precip_font": row_precip_font,
+                "day_lh": day_lh,
+                "info_lh": info_lh,
+                "precip_lh": precip_lh,
+            }
+
+        layout = _layout_forecast(scale=1.0)
+        for _ in range(3):
+            inter_gap = max(8, int(layout["row_pad"] * 0.9))
+            total_needed = 0
+            for day in daily[:forecast_days]:
+                total_text_h = (
+                    layout["day_lh"]
+                    + layout["row_line_gap"]
+                    + layout["info_lh"]
+                    + layout["row_line_gap"]
+                    + layout["precip_lh"]
+                )
+                content_h = max(layout["row_icon"], total_text_h)
+                total_needed += content_h + layout["row_pad"] * 2
+            total_needed += inter_gap * max(0, forecast_days - 1)
+
+            if total_needed <= remaining_h or total_needed <= 0:
+                break
+            layout = _layout_forecast(scale=(remaining_h / total_needed) * 0.98)
+
+        y_cursor = y
+        inter_gap = max(8, int(layout["row_pad"] * 0.9))
 
         for idx, day in enumerate(daily[:forecast_days]):
-            row_y0 = y + idx * row_h
-            row_y1 = min(panel_h - pad, row_y0 + row_h)
-            if row_y0 >= panel_h - pad:
+            total_text_h = (
+                layout["day_lh"]
+                + layout["row_line_gap"]
+                + layout["info_lh"]
+                + layout["row_line_gap"]
+                + layout["precip_lh"]
+            )
+            content_h = max(layout["row_icon"], total_text_h)
+            block_h = content_h + layout["row_pad"] * 2
+
+            row_y0 = y_cursor
+            row_y1 = row_y0 + block_h
+            if row_y0 >= panel_h - pad or row_y1 > panel_h - pad:
                 break
 
             dt = datetime.fromtimestamp(int((day or {}).get("dt", 0)), tz=timezone.utc).astimezone(tz)
@@ -943,28 +991,30 @@ class DailyCatWeather(BasePlugin):
             except (TypeError, ValueError):
                 pop = 0
 
-            icon_img = self._simple_weather_icon(icon_code, size=row_icon).convert("RGBA")
+            row_pad = layout["row_pad"]
+            icon_img = self._simple_weather_icon(icon_code, size=layout["row_icon"]).convert("RGBA")
             icon_y = row_y0 + row_pad
             panel.paste(icon_img, (pad, icon_y), icon_img)
 
-            text_x = pad + row_icon + gap
-            max_text_w = panel_w - pad - text_x
-            max_text_w = max(30, max_text_w)
+            text_x = pad + layout["row_icon"] + gap
+            max_text_w = max(30, panel_w - pad - text_x)
 
-            y_cursor = row_y0 + row_pad
-            draw.text((text_x, y_cursor), label, fill=(0, 0, 0), font=row_day_font)
-            y_cursor += day_lh + row_line_gap
+            line_y = row_y0 + row_pad
+            draw.text((text_x, line_y), label, fill=(0, 0, 0), font=layout["row_day_font"])
+            line_y += layout["day_lh"] + layout["row_line_gap"]
 
             temps_line = f"H: {_format_degree(high)}  L: {_format_degree(low)}"
-            draw.text((text_x, y_cursor), temps_line, fill=(0, 0, 0), font=row_info_font)
-            y_cursor += info_lh + row_line_gap
+            draw.text((text_x, line_y), temps_line, fill=(0, 0, 0), font=layout["row_info_font"])
+            line_y += layout["info_lh"] + layout["row_line_gap"]
 
             precip_line = f"Precip: {pop}%"
-            draw.text((text_x, y_cursor), precip_line, fill=(0, 0, 0), font=row_precip_font)
-            y_cursor += precip_lh
+            draw.text((text_x, line_y), precip_line, fill=(0, 0, 0), font=layout["row_precip_font"])
 
             if idx < forecast_days - 1:
-                draw.line((pad, row_y1, panel_w - pad, row_y1), fill=(0, 0, 0))
+                divider_y = row_y1 + int(inter_gap / 2)
+                if divider_y < panel_h - pad:
+                    draw.line((pad, divider_y, panel_w - pad, divider_y), fill=(0, 0, 0))
+            y_cursor = row_y1 + inter_gap
 
         return panel
 
