@@ -57,7 +57,7 @@ GEMINI_IMAGE_CONFIG_UNSUPPORTED_MODELS = {
     "models/gemini-3-pro-image-preview",
 }
 
-PROMPT_VERSION = 6
+PROMPT_VERSION = 7
 DEFAULT_CAT_DESCRIPTION = (
     "a larger-than-average (but not obese) orange-and-white cat (orange/ginger coat with white chest and paws; no other fur colours)"
 )
@@ -65,32 +65,37 @@ DEFAULT_CAT_DESCRIPTION = (
 IMAGE_THEME_PRESETS = {
     "storybook": {
         "label": "Storybook",
-        "hint": "Art direction: classic children's picture book illustration, friendly and whimsical. ",
+        "hint": "PRIMARY art direction: classic children's picture book illustration, friendly and whimsical. "
+        "Simple shapes, charming proportions, playful details (still flat colors). ",
     },
     "cozy_anime": {
         "label": "Cozy Anime (Cel-Paint)",
-        "hint": "Art direction: cozy anime-inspired cel-painted story illustration with simplified shapes and warm mood. "
+        "hint": "PRIMARY art direction: cozy anime-inspired cel-painted story illustration with simplified shapes and warm mood. "
         "Must remain flat and high-contrast: no gradients, no watercolor paper texture, no brushstroke textures, no fine shading. ",
     },
     "paper_cutout": {
         "label": "Paper Cutout",
-        "hint": "Art direction: layered paper cutout collage, crisp shapes, playful textures (no gradients). ",
+        "hint": "PRIMARY art direction: layered paper cutout collage. Crisp cut edges, stacked layers, simple shapes, bold color blocks (no gradients). ",
     },
     "midcentury_poster": {
         "label": "Mid-Century Poster",
-        "hint": "Art direction: mid-century modern travel poster, bold flat shapes, clean geometry. ",
+        "hint": "PRIMARY art direction: mid-century modern travel poster. Clean geometry, bold flat shapes, minimal detail, strong silhouette design. "
+        "Avoid children's-book style; poster composition and graphic simplicity. ",
     },
     "comic": {
         "label": "Comic",
-        "hint": "Art direction: clean comic illustration with bold outlines and flat colors (single scene, not a panel). ",
+        "hint": "PRIMARY art direction: clean comic illustration with bold outlines and flat colors (single scene, not a panel). "
+        "Use graphic inked linework and simplified shapes. ",
     },
     "linocut": {
         "label": "Linocut Print",
-        "hint": "Art direction: linocut print look with chunky carved shapes and high contrast (still in flat colors). ",
+        "hint": "PRIMARY art direction: linocut print look with chunky carved shapes and high contrast (still in flat colors). "
+        "Suggest a carved look via shape language (no heavy texture). ",
     },
     "woodblock": {
         "label": "Woodblock",
-        "hint": "Art direction: Japanese woodblock-inspired composition, simplified shapes, flat colors, strong silhouettes. ",
+        "hint": "PRIMARY art direction: Japanese woodblock-inspired composition. Simplified shapes, flat colors, strong silhouettes, iconic framing. "
+        "Avoid modern children's-book styling. ",
     },
 }
 
@@ -409,10 +414,12 @@ class DailyCatWeather(BasePlugin):
         theme_hint="",
     ):
         base = (
-            "Children's book illustration of an ambitious cat on a wholesome daily mission. "
+            f"{theme_hint}"
+            "Illustration of an ambitious cat on a wholesome daily mission. "
             f"Main character: {DEFAULT_CAT_DESCRIPTION}. "
             "The cat's fur is strictly orange and white (no other fur colours). "
-            "Keep it lighthearted and amusing, with a whimsical storybook vibe (not photorealistic). "
+            "Follow the PRIMARY art direction above strictly (do not default to a generic style). "
+            "Keep it lighthearted and amusing (not photorealistic). "
             "No text, no captions, no speech bubbles. "
         )
 
@@ -437,7 +444,6 @@ class DailyCatWeather(BasePlugin):
             f"The scene matches today's weather: {weather.description}. "
             f"{constraints}"
             f"{holiday_hint}"
-            f"{theme_hint}"
             "Encourage creativity: pick an original setting and mission; avoid repeating the same scene across rerolls. "
             f"The cat is {activity}{accessories}. "
             f"Target aspect ratio: {aspect_hint}. "
@@ -462,10 +468,12 @@ class DailyCatWeather(BasePlugin):
         theme_hint="",
     ):
         base = (
-            "Children's book illustration of an ambitious cat on a wholesome daily mission. "
+            f"{theme_hint}"
+            "Illustration of an ambitious cat on a wholesome daily mission. "
             f"Main character: {DEFAULT_CAT_DESCRIPTION}. "
             "The cat's fur is strictly orange and white (no other fur colours). "
-            "Keep it lighthearted and amusing, with a whimsical storybook vibe (not photorealistic). "
+            "Follow the PRIMARY art direction above strictly (do not default to a generic style). "
+            "Keep it lighthearted and amusing (not photorealistic). "
             "No text, no captions, no speech bubbles. "
         )
 
@@ -486,7 +494,6 @@ class DailyCatWeather(BasePlugin):
             f"{base}"
             f"{weather_line}"
             f"{holiday_hint}"
-            f"{theme_hint}"
             f"{constraints}"
             "Use the following scene idea as the main direction (you may add small visual details, but do not add new main subjects): "
             f"{user_prompt}. "
