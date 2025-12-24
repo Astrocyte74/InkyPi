@@ -912,37 +912,36 @@ class DailyCatWeather(BasePlugin):
 
         def _layout_forecast(scale=1.0):
             row_pad = max(6, int(base_row_h * 0.12 * scale))
-            row_line_gap = max(5, int(row_pad * 0.7))
+            row_line_gap = max(5, int(row_pad * 0.6))
             row_icon = max(28, int(base_row_h * 0.62 * scale))
-            row_day_font = self._font("Jost", max(13, int(base_row_h * 0.26 * scale)), bold=True)
-            row_info_font = self._font("Jost", max(12, int(base_row_h * 0.22 * scale)))
-            row_precip_font = row_info_font
 
-            day_lh = _line_height(row_day_font)
-            info_lh = _line_height(row_info_font)
+            main_font_size = max(13, int(base_row_h * 0.25 * scale))
+            precip_font_size = max(12, int(base_row_h * 0.22 * scale))
+
+            row_main_font = self._font("Jost", main_font_size, bold=True)
+            row_precip_font = self._font("Jost", precip_font_size)
+
+            main_lh = _line_height(row_main_font)
             precip_lh = _line_height(row_precip_font)
 
             return {
                 "row_pad": row_pad,
                 "row_line_gap": row_line_gap,
                 "row_icon": row_icon,
-                "row_day_font": row_day_font,
-                "row_info_font": row_info_font,
+                "main_font_size": main_font_size,
+                "row_main_font": row_main_font,
                 "row_precip_font": row_precip_font,
-                "day_lh": day_lh,
-                "info_lh": info_lh,
+                "main_lh": main_lh,
                 "precip_lh": precip_lh,
             }
 
         layout = _layout_forecast(scale=1.0)
         for _ in range(3):
-            inter_gap = max(8, int(layout["row_pad"] * 0.9))
+            inter_gap = max(6, int(layout["row_pad"] * 0.6))
             total_needed = 0
             for day in daily[:forecast_days]:
                 total_text_h = (
-                    layout["day_lh"]
-                    + layout["row_line_gap"]
-                    + layout["info_lh"]
+                    layout["main_lh"]
                     + layout["row_line_gap"]
                     + layout["precip_lh"]
                 )
@@ -955,13 +954,20 @@ class DailyCatWeather(BasePlugin):
             layout = _layout_forecast(scale=(remaining_h / total_needed) * 0.98)
 
         y_cursor = y
-        inter_gap = max(8, int(layout["row_pad"] * 0.9))
+        inter_gap = max(6, int(layout["row_pad"] * 0.6))
+
+        def _fit_bold(text, max_width, start_size, min_size=10):
+            size = start_size
+            while size > min_size:
+                font = self._font("Jost", size, bold=True)
+                if _text_size(text, font)[0] <= max_width:
+                    return font
+                size -= 1
+            return self._font("Jost", min_size, bold=True)
 
         for idx, day in enumerate(daily[:forecast_days]):
             total_text_h = (
-                layout["day_lh"]
-                + layout["row_line_gap"]
-                + layout["info_lh"]
+                layout["main_lh"]
                 + layout["row_line_gap"]
                 + layout["precip_lh"]
             )
@@ -1000,12 +1006,10 @@ class DailyCatWeather(BasePlugin):
             max_text_w = max(30, panel_w - pad - text_x)
 
             line_y = row_y0 + row_pad
-            draw.text((text_x, line_y), label, fill=(0, 0, 0), font=layout["row_day_font"])
-            line_y += layout["day_lh"] + layout["row_line_gap"]
-
-            temps_line = f"H: {_format_degree(high)}  L: {_format_degree(low)}"
-            draw.text((text_x, line_y), temps_line, fill=(0, 0, 0), font=layout["row_info_font"])
-            line_y += layout["info_lh"] + layout["row_line_gap"]
+            main_line = f"{label}  H: {_format_degree(high)}  L: {_format_degree(low)}"
+            main_font = _fit_bold(main_line, max_text_w, layout["main_font_size"], min_size=10)
+            draw.text((text_x, line_y), main_line, fill=(0, 0, 0), font=main_font)
+            line_y += _line_height(main_font) + layout["row_line_gap"]
 
             precip_line = f"Precip: {pop}%"
             draw.text((text_x, line_y), precip_line, fill=(0, 0, 0), font=layout["row_precip_font"])
