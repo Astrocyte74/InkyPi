@@ -5,13 +5,28 @@
     <label class="form-label">Location: </label>
     <div class="form-group">
         <span>Latitude </span>
-        <input readonly type="text" id="latitude" name="latitude" class="form-input" />
+        <input type="text" id="latitude" name="latitude" class="form-input" inputmode="decimal" />
     </div>
     <div class="form-group">
         <span>Longitude </span>
-        <input readonly type="text" id="longitude" name="longitude" class="form-input" />
+        <input type="text" id="longitude" name="longitude" class="form-input" inputmode="decimal" />
     </div>
     <button type="button" id="openMap" class="action-button compact">Select Location</button>
+</div>
+
+<div class="form-group">
+    <label for="savedLocations" class="form-label">Saved Locations:</label>
+    <div class="form-group nowrap">
+        <select id="savedLocations" class="form-input"></select>
+        <button type="button" id="applySavedLocation" class="action-button compact">Use</button>
+    </div>
+    <div class="form-group nowrap" style="margin-top: 8px;">
+        <button type="button" id="saveCurrentLocation" class="action-button compact">Save Current</button>
+        <button type="button" id="deleteSavedLocation" class="action-button compact">Delete Selected</button>
+    </div>
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Saved in your browser so you can re-select instantly without panning the world map.
+    </div>
 </div>
 
 <div class="form-group">
@@ -114,33 +129,150 @@
         const $longitude = document.querySelector('#longitude');
         const $openMap = document.querySelector('#openMap');
         const $closeMap = document.querySelector('#closeMap');
+        const $locationLabel = document.querySelector('#locationLabel');
 
-        let latitude = +$latitude.value;
-        let longitude = +$longitude.value;
-        let zoom = latitude && longitude ? 4.5 : 2.5;
+        const $savedLocations = document.querySelector('#savedLocations');
+        const $applySavedLocation = document.querySelector('#applySavedLocation');
+        const $saveCurrentLocation = document.querySelector('#saveCurrentLocation');
+        const $deleteSavedLocation = document.querySelector('#deleteSavedLocation');
+
+        const STORAGE_KEY = 'inkypi.daily_cat_weather.saved_locations';
 
         let map, marker;
+
+        function parseFloatOrNull(value) {
+            const n = parseFloat((value || '').toString().trim());
+            return Number.isFinite(n) ? n : null;
+        }
+
+        function currentCoords() {
+            return {
+                lat: parseFloatOrNull($latitude.value),
+                lon: parseFloatOrNull($longitude.value),
+            };
+        }
+
+        function normalizeLocations(locations) {
+            const cleaned = [];
+            const seen = new Set();
+            (locations || []).forEach(item => {
+                if (!item) return;
+                const label = (item.label || '').toString().trim();
+                const lat = parseFloatOrNull(item.lat);
+                const lon = parseFloatOrNull(item.lon);
+                if (!label || lat === null || lon === null) return;
+                const key = `${label}|${lat.toFixed(6)}|${lon.toFixed(6)}`;
+                if (seen.has(key)) return;
+                seen.add(key);
+                cleaned.push({ label, lat, lon });
+            });
+            return cleaned;
+        }
+
+        function loadSavedLocations() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                const parsed = raw ? JSON.parse(raw) : [];
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function saveSavedLocations(locations) {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(locations));
+            } catch (e) {
+                // ignore storage errors
+            }
+        }
+
+        function renderSavedLocations() {
+            const locations = normalizeLocations(loadSavedLocations());
+            $savedLocations.innerHTML = '';
+
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = locations.length ? 'Select…' : 'No saved locations';
+            $savedLocations.appendChild(placeholder);
+
+            locations.forEach((loc, idx) => {
+                const opt = document.createElement('option');
+                opt.value = String(idx);
+                opt.textContent = `${loc.label} (${loc.lat.toFixed(3)}, ${loc.lon.toFixed(3)})`;
+                $savedLocations.appendChild(opt);
+            });
+        }
+
+        function applyLocation(loc) {
+            if (!loc) return;
+            $latitude.value = loc.lat.toFixed(6);
+            $longitude.value = loc.lon.toFixed(6);
+            if ($locationLabel && $locationLabel.value.trim() === '') {
+                $locationLabel.value = loc.label;
+            }
+        }
 
         $openMap.addEventListener('click', () => {
             openModal('mapModal')
             setTimeout(() => {
-                if (!map) {
-                    map = L.map('map').setView([latitude, longitude], zoom);
-                    L.tileLayer(OSM_TILE_URL).addTo(map);
-                    marker = L.marker([latitude, longitude], { draggable: true }).addTo(map);
+                const coords = currentCoords();
+                const lat = coords.lat ?? 51.0;
+                const lon = coords.lon ?? -114.0;
+                const z = coords.lat !== null && coords.lon !== null ? 11 : 2.5;
 
-                    map.on('click', event => {
-                        marker.setLatLng(event.latlng);
-                    });
+                if (!map) {
+                    map = L.map('map').setView([lat, lon], z);
+                    L.tileLayer(OSM_TILE_URL).addTo(map);
+                    marker = L.marker([lat, lon], { draggable: true }).addTo(map);
+                    map.on('click', event => marker.setLatLng(event.latlng));
+                } else {
+                    map.setView([lat, lon], z);
+                    if (marker) {
+                        marker.setLatLng([lat, lon]);
+                    } else {
+                        marker = L.marker([lat, lon], { draggable: true }).addTo(map);
+                    }
                 }
             }, 100);
         });
 
         $closeMap.addEventListener('click', () => {
+            if (!marker) {
+                closeModal('mapModal');
+                return;
+            }
             const position = marker.getLatLng().wrap();
-            $latitude.value = position.lat;
-            $longitude.value = position.lng;
+            $latitude.value = position.lat.toFixed(6);
+            $longitude.value = position.lng.toFixed(6);
             closeModal('mapModal');
+        });
+
+        $applySavedLocation.addEventListener('click', () => {
+            const idx = parseInt($savedLocations.value, 10);
+            if (!Number.isFinite(idx)) return;
+            const locations = normalizeLocations(loadSavedLocations());
+            applyLocation(locations[idx]);
+        });
+
+        $saveCurrentLocation.addEventListener('click', () => {
+            const coords = currentCoords();
+            if (coords.lat === null || coords.lon === null) return;
+            const label = ($locationLabel?.value || '').trim() || 'Saved location';
+            const locations = normalizeLocations(loadSavedLocations());
+            locations.unshift({ label, lat: coords.lat, lon: coords.lon });
+            saveSavedLocations(normalizeLocations(locations));
+            renderSavedLocations();
+            $savedLocations.value = '0';
+        });
+
+        $deleteSavedLocation.addEventListener('click', () => {
+            const idx = parseInt($savedLocations.value, 10);
+            if (!Number.isFinite(idx)) return;
+            const locations = normalizeLocations(loadSavedLocations());
+            locations.splice(idx, 1);
+            saveSavedLocations(locations);
+            renderSavedLocations();
         });
 
         if (loadPluginSettings) {
@@ -167,6 +299,26 @@
             document.getElementById('imageModel').value = 'gemini-2.5-flash-image';
             document.getElementById('quality').value = '2k';
             document.getElementById('cacheId').value = 'default';
+        }
+
+        renderSavedLocations();
+
+        // Auto-save the current configured location once (if present) to avoid ever panning from (0,0).
+        try {
+            const coords = currentCoords();
+            const label = ($locationLabel?.value || '').trim();
+            if (label && coords.lat !== null && coords.lon !== null) {
+                const existing = normalizeLocations(loadSavedLocations());
+                const key = `${label}|${coords.lat.toFixed(6)}|${coords.lon.toFixed(6)}`;
+                const has = existing.some(l => `${l.label}|${l.lat.toFixed(6)}|${l.lon.toFixed(6)}` === key);
+                if (!has) {
+                    existing.unshift({ label, lat: coords.lat, lon: coords.lon });
+                    saveSavedLocations(normalizeLocations(existing));
+                    renderSavedLocations();
+                }
+            }
+        } catch (e) {
+            // ignore
         }
     });
 </script>
