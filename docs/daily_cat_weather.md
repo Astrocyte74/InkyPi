@@ -1,6 +1,8 @@
 # Daily Cat Weather (AI Background + Live Forecast)
 
-`Daily Cat Weather` generates a single Gemini background image per day (storybook-style) and overlays live weather (current + multi-day forecast) on top at your chosen refresh interval.
+`Daily Cat Weather` generates a single Gemini background image per day (storybook-style) and shows a live weather panel (current + multi-day forecast) at your chosen refresh interval.
+
+Layout: the illustration is on the left and a fixed weather sidebar is on the right, so weather never covers key parts of the image.
 
 ## Requirements
 
@@ -34,4 +36,4 @@ See `docs/api_keys.md` for `.env` setup.
 
 ## Cache Location
 
-Cached backgrounds are stored under `mock_display_output/daily_cat_weather/` (including a `latest_bg_<cacheId>.png` convenience copy).
+Cached backgrounds are stored under `mock_display_output/daily_cat_weather/` (including a `latest_bg_<cacheId>.png` convenience copy). The cached background image is the left illustration area (without the sidebar).

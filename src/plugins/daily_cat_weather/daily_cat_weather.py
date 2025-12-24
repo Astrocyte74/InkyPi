@@ -8,6 +8,7 @@ import random
 import re
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
+from fractions import Fraction
 from io import BytesIO
 from typing import Any
 
@@ -17,7 +18,6 @@ from PIL import Image, ImageDraw, ImageFont
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from utils.app_utils import get_font, resolve_path
-from utils.image_utils import resize_image
 
 try:
     from google import genai
@@ -57,10 +57,13 @@ GEMINI_IMAGE_CONFIG_UNSUPPORTED_MODELS = {
     "models/gemini-3-pro-image-preview",
 }
 
-PROMPT_VERSION = 2
+PROMPT_VERSION = 3
 DEFAULT_CAT_DESCRIPTION = (
     "a larger-than-average (but not obese) orange-and-white cat (ginger tabby with a white chest and paws)"
 )
+
+LAYOUT_VERSION = 1
+SIDEBAR_WIDTH_RATIO = 0.30
 
 
 @dataclass(frozen=True)
@@ -150,6 +153,9 @@ class DailyCatWeather(BasePlugin):
             "daily_refresh_time": daily_refresh_time.strftime("%H:%M"),
             "reroll_nonce": reroll_nonce,
             "prompt_version": PROMPT_VERSION,
+            "layout": "right_sidebar",
+            "layout_version": LAYOUT_VERSION,
+            "sidebar_ratio": SIDEBAR_WIDTH_RATIO,
         }
         if active_custom_prompt:
             fingerprint_values.update(
@@ -164,6 +170,13 @@ class DailyCatWeather(BasePlugin):
         if device_config.get_config("orientation") == "vertical":
             dimensions = dimensions[::-1]
 
+        width, height = dimensions
+        sidebar_width = int(width * SIDEBAR_WIDTH_RATIO)
+        sidebar_width = max(120, min(width - 100, sidebar_width))
+        image_width = width - sidebar_width
+        image_size_px = (image_width, height)
+        sidebar_size_px = (sidebar_width, height)
+
         background = None
         meta = self._read_json(meta_path)
         if os.path.exists(bg_path) and meta and meta.get("fingerprint") == fingerprint:
@@ -173,6 +186,8 @@ class DailyCatWeather(BasePlugin):
             except Exception:
                 logger.exception("Failed to load cached background; regenerating.")
                 background = None
+        if background is not None and background.size != image_size_px:
+            background = None
 
         weather = None
         try:
@@ -181,14 +196,22 @@ class DailyCatWeather(BasePlugin):
             logger.exception("Failed to fetch weather; continuing without overlay.")
 
         if background is None:
+            aspect_hint = self._format_aspect_hint(image_width, height)
             if active_custom_prompt:
                 prompt = self._build_custom_prompt(
                     weather,
                     active_custom_prompt,
                     reroll_nonce=reroll_nonce,
+                    aspect_hint=aspect_hint,
                 )
             else:
-                prompt = self._build_prompt(weather, reroll_nonce=reroll_nonce, cache_id=cache_id, day_key=day_key)
+                prompt = self._build_prompt(
+                    weather,
+                    reroll_nonce=reroll_nonce,
+                    cache_id=cache_id,
+                    day_key=day_key,
+                    aspect_hint=aspect_hint,
+                )
             background = self._generate_gemini_background(
                 api_key=gemini_key,
                 prompt=prompt,
@@ -196,7 +219,7 @@ class DailyCatWeather(BasePlugin):
                 image_size=image_size,
                 aspect_ratio="9:16" if device_config.get_config("orientation") == "vertical" else "16:9",
             )
-            background = resize_image(background, dimensions)
+            background = self._cover_crop(background, image_size_px)
             background.save(bg_path)
             self._write_json(
                 meta_path,
@@ -221,6 +244,10 @@ class DailyCatWeather(BasePlugin):
                     "custom_prompt": active_custom_prompt,
                     "custom_prompt_raw": custom_prompt_raw,
                     "custom_prompt_day_key": custom_prompt_day_key,
+                    "layout": "right_sidebar",
+                    "layout_version": LAYOUT_VERSION,
+                    "sidebar_ratio": SIDEBAR_WIDTH_RATIO,
+                    "sidebar_width": sidebar_width,
                 },
             )
             try:
@@ -228,11 +255,11 @@ class DailyCatWeather(BasePlugin):
             except Exception:
                 logger.exception("Failed to update latest background pointer.")
 
-        if weather:
-            overlay = self._render_weather_overlay(weather, tz, forecast_days, dimensions)
-            return self._composite(background, overlay)
-
-        return background
+        canvas = Image.new("RGB", (width, height), (255, 255, 255))
+        canvas.paste(background, (0, 0))
+        panel = self._render_weather_sidebar_panel(weather, tz, forecast_days, sidebar_size_px)
+        canvas.paste(panel, (image_width, 0))
+        return canvas
 
     @staticmethod
     def _cache_dir(device_config):
@@ -302,7 +329,7 @@ class DailyCatWeather(BasePlugin):
             daily=daily,
         )
 
-    def _build_prompt(self, weather, reroll_nonce=0, cache_id="default", day_key=""):
+    def _build_prompt(self, weather, reroll_nonce=0, cache_id="default", day_key="", aspect_hint=""):
         base = (
             "Children's book illustration of an ambitious cat on a wholesome daily mission. "
             f"Main character: {DEFAULT_CAT_DESCRIPTION}. "
@@ -333,13 +360,14 @@ class DailyCatWeather(BasePlugin):
             "Encourage creativity: pick an original setting and mission; avoid repeating the same scene across rerolls. "
             f"The cat is {activity}{accessories}. "
             f"Variant id: {reroll_nonce}. "
-            "Composition guidance: keep the main story action and characters in the middle/upper part of the frame. "
-            "Leave the bottom ~25% as a simpler area (sky/ground/blanket/table/floor) with no critical details, "
-            "so a forecast panel can overlay there. Also keep the top-left corner uncluttered for a small weather badge. "
+            f"Target aspect ratio: {aspect_hint}. "
+            "Composition guidance: the final layout uses a dedicated weather sidebar on the right, so keep the main "
+            "story action and characters centered and slightly left-of-center (avoid placing key details near the far "
+            "right edge). Leave a little extra breathing room at the edges because the image will be center-cropped. "
             f"{SPECTRA6_INSTRUCTIONS}"
         )
 
-    def _build_custom_prompt(self, weather, user_prompt, reroll_nonce=0):
+    def _build_custom_prompt(self, weather, user_prompt, reroll_nonce=0, aspect_hint=""):
         base = (
             "Children's book illustration of an ambitious cat on a wholesome daily mission. "
             f"Main character: {DEFAULT_CAT_DESCRIPTION}. "
@@ -368,9 +396,10 @@ class DailyCatWeather(BasePlugin):
             f"{user_prompt}. "
             "Full-bleed scene, no borders. "
             f"Variant id: {reroll_nonce}. "
-            "Composition guidance: keep the main story action and characters in the middle/upper part of the frame. "
-            "Leave the bottom ~25% as a simpler area (background/ground/floor/table) with no critical details, "
-            "so a forecast panel can overlay there. Also keep the top-left corner uncluttered for a small weather badge. "
+            f"Target aspect ratio: {aspect_hint}. "
+            "Composition guidance: the final layout uses a dedicated weather sidebar on the right, so keep the main "
+            "story action and characters centered and slightly left-of-center (avoid placing key details near the far "
+            "right edge). Leave a little extra breathing room at the edges because the image will be center-cropped. "
             f"{SPECTRA6_INSTRUCTIONS}"
         )
 
@@ -559,6 +588,127 @@ class DailyCatWeather(BasePlugin):
             draw.text((text_x, base_y), label, fill=(0, 0, 0, 255), font=day_font)
             draw.text((text_x, base_y + int(height * 0.24)), f"H {high}  L {low}", fill=(0, 0, 0, 230), font=temp_font)
             draw.text((text_x, base_y + int(height * 0.43)), f"Precip {pop}%", fill=(0, 0, 0, 200), font=pop_font)
+
+    @staticmethod
+    def _cover_crop(image, target_size):
+        target_w, target_h = target_size
+        if target_w <= 0 or target_h <= 0:
+            raise ValueError("Invalid target size for cover crop.")
+
+        img = image.convert("RGB")
+        src_w, src_h = img.size
+        if src_w <= 0 or src_h <= 0:
+            raise ValueError("Invalid source image size.")
+
+        scale = max(target_w / src_w, target_h / src_h)
+        resized_w = max(target_w, int(round(src_w * scale)))
+        resized_h = max(target_h, int(round(src_h * scale)))
+        img = img.resize((resized_w, resized_h), Image.LANCZOS)
+
+        left = max(0, int((resized_w - target_w) / 2))
+        top = max(0, int((resized_h - target_h) / 2))
+        return img.crop((left, top, left + target_w, top + target_h))
+
+    @staticmethod
+    def _format_aspect_hint(width, height):
+        if width <= 0 or height <= 0:
+            return "unknown"
+        ratio = Fraction(width, height).limit_denominator(12)
+        return f"{ratio.numerator}:{ratio.denominator} (~{width/height:.2f}:1)"
+
+    def _render_weather_sidebar_panel(self, weather, tz, forecast_days, sidebar_size):
+        panel_w, panel_h = sidebar_size
+        panel = Image.new("RGB", (panel_w, panel_h), (255, 255, 255))
+        draw = ImageDraw.Draw(panel)
+
+        draw.line((0, 0, 0, panel_h), fill=(0, 0, 0))
+        pad = max(10, int(panel_w * 0.06))
+        y = pad
+
+        title_font = self._font("Jost", max(14, int(panel_w * 0.09)), bold=True)
+        temp_font = self._font("Jost", max(20, int(panel_w * 0.20)), bold=True)
+        small_font = self._font("Jost", max(12, int(panel_w * 0.07)))
+
+        if not weather:
+            draw.text((pad, y), "Weather", fill=(0, 0, 0), font=title_font)
+            draw.text((pad, y + int(pad * 1.4)), "Unavailable", fill=(0, 0, 0), font=small_font)
+            return panel
+
+        temp_value = round(weather.current_temp)
+        feels_value = round(weather.feels_like)
+        temp_unit = "°C" if weather.units == "metric" else ("°F" if weather.units == "imperial" else "K")
+
+        icon_size = max(40, int(panel_w * 0.22))
+        icon = self._load_icon(self._weather_icon_path(weather.icon), size=icon_size).convert("RGB")
+        panel.paste(icon, (pad, y))
+
+        text_x = pad + icon_size + int(pad * 0.6)
+        draw.text((text_x, y), "Now", fill=(0, 0, 0), font=small_font)
+        draw.text((text_x, y + int(icon_size * 0.20)), f"{temp_value}{temp_unit}", fill=(0, 0, 0), font=temp_font)
+        draw.text(
+            (text_x, y + int(icon_size * 0.72)),
+            f"Feels {feels_value}{temp_unit}",
+            fill=(0, 0, 0),
+            font=small_font,
+        )
+
+        y = y + icon_size + int(pad * 1.0)
+        desc = (weather.description or "").strip().capitalize()
+        if desc:
+            draw.text((pad, y), desc, fill=(0, 0, 0), font=small_font)
+            y += int(pad * 1.4)
+
+        draw.text((pad, y), f"Next {forecast_days} days", fill=(0, 0, 0), font=title_font)
+        y += int(pad * 1.2)
+
+        daily = weather.daily[1 : 1 + forecast_days] if weather.daily else []
+        if not daily:
+            draw.text((pad, y), "No forecast", fill=(0, 0, 0), font=small_font)
+            return panel
+
+        remaining_h = panel_h - y - pad
+        row_h = max(60, int(remaining_h / max(1, forecast_days)))
+        row_icon = max(32, int(row_h * 0.55))
+        row_day_font = self._font("Jost", max(14, int(row_h * 0.22)), bold=True)
+        row_temp_font = self._font("Jost", max(12, int(row_h * 0.20)))
+
+        for idx, day in enumerate(daily[:forecast_days]):
+            row_y0 = y + idx * row_h
+            if row_y0 >= panel_h - pad:
+                break
+
+            if idx:
+                draw.line((pad, row_y0, panel_w - pad, row_y0), fill=(0, 0, 0))
+
+            dt = datetime.fromtimestamp(int((day or {}).get("dt", 0)), tz=timezone.utc).astimezone(tz)
+            label = dt.strftime("%a")
+
+            icon_code = "01d"
+            try:
+                icon_code = str(((day or {}).get("weather") or [{}])[0].get("icon") or "01d").replace("n", "d")
+            except Exception:
+                icon_code = "01d"
+
+            temps = (day or {}).get("temp") or {}
+            high = round(float(temps.get("max") or 0.0))
+            low = round(float(temps.get("min") or 0.0))
+            pop = 0
+            try:
+                pop = int(round(float((day or {}).get("pop") or 0.0) * 100))
+            except (TypeError, ValueError):
+                pop = 0
+
+            icon_img = self._load_icon(self._weather_icon_path(icon_code), size=row_icon).convert("RGB")
+            panel.paste(icon_img, (pad, row_y0 + int((row_h - row_icon) / 2)))
+
+            tx = pad + row_icon + int(pad * 0.6)
+            draw.text((tx, row_y0 + int(row_h * 0.12)), label, fill=(0, 0, 0), font=row_day_font)
+            tline = f"{high}° / {low}°"
+            if pop:
+                tline = f"{tline}  {pop}%"
+            draw.text((tx, row_y0 + int(row_h * 0.56)), tline, fill=(0, 0, 0), font=row_temp_font)
+
+        return panel
 
     @staticmethod
     def _weather_icon_path(icon_code):
