@@ -621,14 +621,57 @@ class DailyCatWeather(BasePlugin):
         panel = Image.new("RGB", (panel_w, panel_h), (255, 255, 255))
         draw = ImageDraw.Draw(panel)
 
+        def _text_bbox(text, font):
+            try:
+                return draw.textbbox((0, 0), text, font=font)
+            except Exception:
+                try:
+                    box = font.getbbox(text)
+                    return (0, 0, box[2] - box[0], box[3] - box[1])
+                except Exception:
+                    w, h = font.getsize(text)  # type: ignore[attr-defined]
+                    return (0, 0, w, h)
+
+        def _text_size(text, font):
+            b = _text_bbox(text, font)
+            return (b[2] - b[0], b[3] - b[1])
+
+        def _wrap_text(text, font, max_width, max_lines=2):
+            words = (text or "").strip().split()
+            if not words:
+                return []
+
+            lines = []
+            current = words[0]
+            for word in words[1:]:
+                candidate = f"{current} {word}"
+                w, _ = _text_size(candidate, font)
+                if w <= max_width:
+                    current = candidate
+                else:
+                    lines.append(current)
+                    current = word
+            lines.append(current)
+
+            if max_lines and len(lines) > max_lines:
+                lines = lines[:max_lines]
+                while True:
+                    w, _ = _text_size(lines[-1] + "…", font)
+                    if w <= max_width or len(lines[-1]) <= 1:
+                        break
+                    lines[-1] = lines[-1].rsplit(" ", 1)[0]
+                lines[-1] = lines[-1] + "…"
+            return lines
+
         draw.line((0, 0, 0, panel_h), fill=(0, 0, 0))
         pad = max(10, int(panel_w * 0.06))
+        gap = max(6, int(pad * 0.5))
+
+        title_font = self._font("Jost", max(14, int(panel_w * 0.085)), bold=True)
+        temp_font = self._font("Jost", max(18, int(panel_w * 0.18)), bold=True)
+        small_font = self._font("Jost", max(12, int(panel_w * 0.065)))
+
         y = pad
-
-        title_font = self._font("Jost", max(14, int(panel_w * 0.09)), bold=True)
-        temp_font = self._font("Jost", max(20, int(panel_w * 0.20)), bold=True)
-        small_font = self._font("Jost", max(12, int(panel_w * 0.07)))
-
         if not weather:
             draw.text((pad, y), "Weather", fill=(0, 0, 0), font=title_font)
             draw.text((pad, y + int(pad * 1.4)), "Unavailable", fill=(0, 0, 0), font=small_font)
@@ -637,29 +680,44 @@ class DailyCatWeather(BasePlugin):
         temp_value = round(weather.current_temp)
         feels_value = round(weather.feels_like)
         temp_unit = "°C" if weather.units == "metric" else ("°F" if weather.units == "imperial" else "K")
+        desc = (weather.description or "").strip().capitalize()
 
         icon_size = max(40, int(panel_w * 0.22))
         icon = self._load_icon(self._weather_icon_path(weather.icon), size=icon_size).convert("RGB")
-        panel.paste(icon, (pad, y))
 
-        text_x = pad + icon_size + int(pad * 0.6)
-        draw.text((text_x, y), "Now", fill=(0, 0, 0), font=small_font)
-        draw.text((text_x, y + int(icon_size * 0.20)), f"{temp_value}{temp_unit}", fill=(0, 0, 0), font=temp_font)
-        draw.text(
-            (text_x, y + int(icon_size * 0.72)),
-            f"Feels {feels_value}{temp_unit}",
-            fill=(0, 0, 0),
-            font=small_font,
-        )
+        icon_x = pad
+        icon_y = y
+        panel.paste(icon, (icon_x, icon_y))
 
-        y = y + icon_size + int(pad * 1.0)
-        desc = (weather.description or "").strip().capitalize()
+        text_x = icon_x + icon_size + gap
+        max_text_w = panel_w - pad - text_x
+
+        line_gap = max(3, int(small_font.size * 0.35)) if hasattr(small_font, "size") else 4
+        y_cursor = icon_y
+
+        for line in _wrap_text("Now", small_font, max_text_w, max_lines=1):
+            draw.text((text_x, y_cursor), line, fill=(0, 0, 0), font=small_font)
+            y_cursor += _text_size(line, small_font)[1] + line_gap
+
+        for line in _wrap_text(f"{temp_value}{temp_unit}", temp_font, max_text_w, max_lines=1):
+            draw.text((text_x, y_cursor), line, fill=(0, 0, 0), font=temp_font)
+            y_cursor += _text_size(line, temp_font)[1] + line_gap
+
+        feels_line = f"Feels {feels_value}{temp_unit}"
+        for line in _wrap_text(feels_line, small_font, max_text_w, max_lines=1):
+            draw.text((text_x, y_cursor), line, fill=(0, 0, 0), font=small_font)
+            y_cursor += _text_size(line, small_font)[1] + line_gap
+
         if desc:
-            draw.text((pad, y), desc, fill=(0, 0, 0), font=small_font)
-            y += int(pad * 1.4)
+            for line in _wrap_text(desc, small_font, max_text_w, max_lines=2):
+                draw.text((text_x, y_cursor), line, fill=(0, 0, 0), font=small_font)
+                y_cursor += _text_size(line, small_font)[1] + line_gap
+
+        header_h = max(icon_size, y_cursor - icon_y)
+        y = icon_y + header_h + pad
 
         draw.text((pad, y), f"Next {forecast_days} days", fill=(0, 0, 0), font=title_font)
-        y += int(pad * 1.2)
+        y += _text_size(f"Next {forecast_days} days", title_font)[1] + int(pad * 0.6)
 
         daily = weather.daily[1 : 1 + forecast_days] if weather.daily else []
         if not daily:
@@ -667,13 +725,21 @@ class DailyCatWeather(BasePlugin):
             return panel
 
         remaining_h = panel_h - y - pad
-        row_h = max(60, int(remaining_h / max(1, forecast_days)))
-        row_icon = max(32, int(row_h * 0.55))
+        row_h = max(70, int(remaining_h / max(1, forecast_days)))
+        row_pad = max(6, int(row_h * 0.12))
+        row_icon = max(30, int(row_h * 0.50))
         row_day_font = self._font("Jost", max(14, int(row_h * 0.22)), bold=True)
         row_temp_font = self._font("Jost", max(12, int(row_h * 0.20)))
 
+        precip_col_w = max(54, int(panel_w * 0.30))
+        precip_x0 = panel_w - pad - precip_col_w
+        precip_x1 = panel_w - pad
+        temp_x0 = pad + row_icon + gap
+        temp_x1 = precip_x0 - gap
+
         for idx, day in enumerate(daily[:forecast_days]):
             row_y0 = y + idx * row_h
+            row_y1 = min(panel_h - pad, row_y0 + row_h)
             if row_y0 >= panel_h - pad:
                 break
 
@@ -699,14 +765,25 @@ class DailyCatWeather(BasePlugin):
                 pop = 0
 
             icon_img = self._load_icon(self._weather_icon_path(icon_code), size=row_icon).convert("RGB")
-            panel.paste(icon_img, (pad, row_y0 + int((row_h - row_icon) / 2)))
+            icon_y = row_y0 + int((row_h - row_icon) / 2)
+            panel.paste(icon_img, (pad, icon_y))
 
-            tx = pad + row_icon + int(pad * 0.6)
-            draw.text((tx, row_y0 + int(row_h * 0.12)), label, fill=(0, 0, 0), font=row_day_font)
-            tline = f"{high}° / {low}°"
-            if pop:
-                tline = f"{tline}  {pop}%"
-            draw.text((tx, row_y0 + int(row_h * 0.56)), tline, fill=(0, 0, 0), font=row_temp_font)
+            day_y = row_y0 + row_pad
+            temp_y = day_y + _text_size(label, row_day_font)[1] + int(row_pad * 0.35)
+            temp_y = min(temp_y, row_y1 - row_pad - _text_size("0° / 0°", row_temp_font)[1])
+
+            draw.text((temp_x0, day_y), label, fill=(0, 0, 0), font=row_day_font)
+
+            temps_line = f"{high}° / {low}°"
+            if _text_size(temps_line, row_temp_font)[0] > (temp_x1 - temp_x0):
+                temps_line = f"H{high} L{low}"
+            draw.text((temp_x0, temp_y), temps_line, fill=(0, 0, 0), font=row_temp_font)
+
+            precip_line = f"{pop}%"
+            pw, ph = _text_size(precip_line, row_temp_font)
+            precip_y = temp_y
+            precip_x = precip_x1 - pw
+            draw.text((precip_x, precip_y), precip_line, fill=(0, 0, 0), font=row_temp_font)
 
         return panel
 
