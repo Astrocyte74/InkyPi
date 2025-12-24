@@ -397,7 +397,36 @@ class TelegramBotListener:
         # Prefer the actual currently displayed image (works even when the image came from playlists/plugins).
         current_path = getattr(self.device_config, "current_image_file", None)
         if current_path and os.path.exists(current_path):
-            self._send_photo_path(chat_id, current_path, caption="Current display")
+            caption = "Current display"
+            try:
+                refresh_info = self.device_config.get_refresh_info()
+            except Exception:
+                refresh_info = None
+
+            try:
+                if getattr(refresh_info, "plugin_id", None) == "daily_cat_weather":
+                    theme_id = None
+                    try:
+                        playlist_manager = self.device_config.get_playlist_manager()
+                        instance_name = getattr(refresh_info, "plugin_instance", None)
+                        plugin_instance = (
+                            playlist_manager.find_plugin("daily_cat_weather", instance_name)
+                            if instance_name
+                            else None
+                        )
+                        theme_id = (plugin_instance.settings or {}).get("imageTheme") if plugin_instance else None
+                    except Exception:
+                        theme_id = None
+
+                    theme_id = (theme_id or "storybook").strip().lower()
+                    presets = self._daily_cat_theme_presets()
+                    theme_label = (presets.get(theme_id, {}).get("label") if presets else None) or theme_id
+                    caption = f"🐱 Daily Cat Weather (theme={theme_id} — {theme_label})"
+            except Exception:
+                # Keep the status command resilient; fall back to the default caption.
+                caption = "Current display"
+
+            self._send_photo_path(chat_id, current_path, caption=caption)
             return
 
         # Fallback: last Telegram-updated background
@@ -2369,7 +2398,11 @@ class TelegramBotListener:
             )
 
             mode = "custom" if (plugin_instance.settings.get("customPromptDayKey") == day_key and plugin_instance.settings.get("customPromptEnhanced")) else "auto"
-            suffix = f"(mode={mode}, cacheId={cache_id}, day={day_key}, reroll={plugin_instance.settings.get('rerollNonce')})"
+            theme_id = ((plugin_instance.settings or {}).get("imageTheme") or "storybook").strip().lower()
+            suffix = (
+                f"(mode={mode}, theme={theme_id}, cacheId={cache_id}, day={day_key}, "
+                f"reroll={plugin_instance.settings.get('rerollNonce')})"
+            )
             if removed:
                 caption = f"🐱 Daily Cat Weather refreshed {suffix}"
             else:
