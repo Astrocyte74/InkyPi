@@ -816,6 +816,7 @@ class DailyCatWeather(BasePlugin):
         location_font = self._font("Jost", max(12, int(panel_w * 0.070)))
         text_secondary = (0, 0, 0)
         icon_accent = (0, 0, 0, 255)
+        hi_lo_base_size = max(14, int(panel_w * 0.10))
 
         y = pad
         if not weather:
@@ -872,10 +873,9 @@ class DailyCatWeather(BasePlugin):
 
         y_cursor = icon_y + max(icon_size, (temp_y - icon_y) + temp_lh) + int(gap * 0.7)
 
-        if desc:
-            for line in _wrap_text(desc, small_font, max_text_w, max_lines=2):
-                draw.text((text_x, y_cursor), line, fill=(0, 0, 0), font=small_font)
-                y_cursor += small_lh + int(line_gap * 0.9)
+        feels_line = f"Feels like {feels_value}{temp_unit}"
+        draw.text((text_x, y_cursor), feels_line, fill=text_secondary, font=small_font)
+        y_cursor += small_lh + line_gap
 
         today_high_low = ""
         try:
@@ -889,12 +889,9 @@ class DailyCatWeather(BasePlugin):
             today_high_low = ""
 
         if today_high_low:
-            draw.text((text_x, y_cursor), today_high_low, fill=(0, 0, 0), font=small_font)
-            y_cursor += small_lh + line_gap
-
-        feels_line = f"Feels like {feels_value}{temp_unit}"
-        draw.text((text_x, y_cursor), feels_line, fill=text_secondary, font=small_font)
-        y_cursor += small_lh + line_gap
+            hi_lo_font = _fit_font(today_high_low, max_text_w, hi_lo_base_size, min_size=12)
+            draw.text((text_x, y_cursor), today_high_low, fill=(0, 0, 0), font=hi_lo_font)
+            y_cursor += _line_height(hi_lo_font) + line_gap
 
         header_h = max(icon_size, y_cursor - icon_y)
         divider_y = icon_y + header_h + int(pad * 0.7)
