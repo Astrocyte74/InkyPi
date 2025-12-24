@@ -57,7 +57,7 @@ GEMINI_IMAGE_CONFIG_UNSUPPORTED_MODELS = {
     "models/gemini-3-pro-image-preview",
 }
 
-PROMPT_VERSION = 3
+PROMPT_VERSION = 5
 DEFAULT_CAT_DESCRIPTION = (
     "a larger-than-average (but not obese) orange-and-white cat (ginger tabby with a white chest and paws)"
 )
@@ -219,6 +219,8 @@ class DailyCatWeather(BasePlugin):
                 image_size=image_size,
                 aspect_ratio="9:16" if device_config.get_config("orientation") == "vertical" else "16:9",
             )
+            background = self._trim_uniform_border(background)
+            background = self._trim_internal_vertical_divider(background)
             background = self._cover_crop(background, image_size_px)
             background.save(bg_path)
             self._write_json(
@@ -355,15 +357,19 @@ class DailyCatWeather(BasePlugin):
 
         return (
             f"{base}"
-            f"The scene matches today's weather: {weather.description} (about {temp_c:.0f}°C). "
+            f"The scene matches today's weather: {weather.description}. "
             f"{constraints}"
             "Encourage creativity: pick an original setting and mission; avoid repeating the same scene across rerolls. "
             f"The cat is {activity}{accessories}. "
-            f"Variant id: {reroll_nonce}. "
             f"Target aspect ratio: {aspect_hint}. "
             "Composition guidance: the final layout uses a dedicated weather sidebar on the right, so keep the main "
             "story action and characters centered and slightly left-of-center (avoid placing key details near the far "
             "right edge). Leave a little extra breathing room at the edges because the image will be center-cropped. "
+            "Hard constraints: single scene only; do NOT create multiple panels, split-screen, triptych, frames, "
+            "borders, dividers, callout boxes, badges, thermometers, gauges, charts, or any weather UI. "
+            "Do not draw weather symbols/icons/emblems/logos (e.g. cloud icons, snowflake badges); depict the weather naturally in the scene. "
+            "The illustration must fill the entire canvas edge-to-edge (no white margins, no empty borders). "
+            "Absolutely no text, labels, or numbers anywhere in the illustration."
             f"{SPECTRA6_INSTRUCTIONS}"
         )
 
@@ -379,7 +385,7 @@ class DailyCatWeather(BasePlugin):
         temp_c = None
         if weather:
             temp_c = self._to_celsius(weather.current_temp, weather.units)
-            weather_line = f"Today's weather: {weather.description} (about {temp_c:.0f}°C). "
+            weather_line = f"Today's weather: {weather.description}. "
 
         constraints = ""
         mild = temp_c is not None and temp_c >= 8
@@ -395,11 +401,15 @@ class DailyCatWeather(BasePlugin):
             "Use the following scene idea as the main direction (you may add small visual details, but do not add new main subjects): "
             f"{user_prompt}. "
             "Full-bleed scene, no borders. "
-            f"Variant id: {reroll_nonce}. "
             f"Target aspect ratio: {aspect_hint}. "
             "Composition guidance: the final layout uses a dedicated weather sidebar on the right, so keep the main "
             "story action and characters centered and slightly left-of-center (avoid placing key details near the far "
             "right edge). Leave a little extra breathing room at the edges because the image will be center-cropped. "
+            "Hard constraints: single scene only; do NOT create multiple panels, split-screen, triptych, frames, "
+            "borders, dividers, callout boxes, badges, thermometers, gauges, charts, or any weather UI. "
+            "Do not draw standalone symbols/icons/emblems/logos/stamps/badges (e.g. cloud icons, snowflake badges); depict the weather naturally in the scene. "
+            "The illustration must fill the entire canvas edge-to-edge (no white margins, no empty borders). "
+            "Absolutely no text, labels, or numbers anywhere in the illustration."
             f"{SPECTRA6_INSTRUCTIONS}"
         )
 
@@ -610,11 +620,133 @@ class DailyCatWeather(BasePlugin):
         return img.crop((left, top, left + target_w, top + target_h))
 
     @staticmethod
+    def _trim_uniform_border(image, bg=(255, 255, 255), tolerance=14, min_coverage=0.985, max_crop_ratio=0.22):
+        """Trim uniform edge borders (e.g., white margins) while avoiding aggressive crops."""
+        img = image.convert("RGB")
+        w, h = img.size
+        if w < 10 or h < 10:
+            return img
+
+        px = img.load()
+        max_left = int(w * max_crop_ratio)
+        max_right = int(w * max_crop_ratio)
+        max_top = int(h * max_crop_ratio)
+        max_bottom = int(h * max_crop_ratio)
+
+        def near_bg(rgb):
+            return (
+                abs(rgb[0] - bg[0]) <= tolerance
+                and abs(rgb[1] - bg[1]) <= tolerance
+                and abs(rgb[2] - bg[2]) <= tolerance
+            )
+
+        def edge_coverage_left(x):
+            hits = 0
+            for yy in range(h):
+                if near_bg(px[x, yy]):
+                    hits += 1
+            return hits / h
+
+        def edge_coverage_right(x):
+            hits = 0
+            for yy in range(h):
+                if near_bg(px[x, yy]):
+                    hits += 1
+            return hits / h
+
+        def edge_coverage_top(y):
+            hits = 0
+            for xx in range(w):
+                if near_bg(px[xx, y]):
+                    hits += 1
+            return hits / w
+
+        def edge_coverage_bottom(y):
+            hits = 0
+            for xx in range(w):
+                if near_bg(px[xx, y]):
+                    hits += 1
+            return hits / w
+
+        left = 0
+        right = w
+        top = 0
+        bottom = h
+
+        # Iterate until edges are no longer mostly background or we hit crop limits.
+        while left < max_left and edge_coverage_left(left) >= min_coverage:
+            left += 1
+        while (w - right) < max_right and edge_coverage_right(right - 1) >= min_coverage:
+            right -= 1
+        while top < max_top and edge_coverage_top(top) >= min_coverage:
+            top += 1
+        while (h - bottom) < max_bottom and edge_coverage_bottom(bottom - 1) >= min_coverage:
+            bottom -= 1
+
+        if right - left < int(w * 0.55) or bottom - top < int(h * 0.55):
+            return img
+        if left == 0 and right == w and top == 0 and bottom == h:
+            return img
+        return img.crop((left, top, right, bottom))
+
+    @staticmethod
+    def _trim_internal_vertical_divider(image, tolerance=18, min_coverage=0.93):
+        """Trim right-side panel artifacts separated by a strong vertical divider line."""
+        img = image.convert("RGB")
+        w, h = img.size
+        if w < 80 or h < 80:
+            return img
+
+        px = img.load()
+
+        def near_white(rgb):
+            return rgb[0] >= 255 - tolerance and rgb[1] >= 255 - tolerance and rgb[2] >= 255 - tolerance
+
+        def near_black(rgb):
+            return rgb[0] <= tolerance and rgb[1] <= tolerance and rgb[2] <= tolerance
+
+        def divider_coverage(x):
+            hits = 0
+            for yy in range(h):
+                c = px[x, yy]
+                if near_white(c) or near_black(c):
+                    hits += 1
+            return hits / h
+
+        search_left = int(w * 0.35)
+        search_right = int(w * 0.92)
+
+        # scan from right to left to find the first strong divider
+        divider_x = None
+        for x in range(search_right, search_left, -1):
+            if divider_coverage(x) >= min_coverage:
+                divider_x = x
+                break
+
+        if divider_x is None:
+            return img
+
+        # expand to a run of divider-like columns
+        run_start = divider_x
+        while run_start > search_left and divider_coverage(run_start - 1) >= min_coverage:
+            run_start -= 1
+
+        # Crop everything to the left of the divider run.
+        new_right = max(int(w * 0.55), run_start)
+        if new_right >= w:
+            return img
+        return img.crop((0, 0, new_right, h))
+
+    @staticmethod
     def _format_aspect_hint(width, height):
         if width <= 0 or height <= 0:
             return "unknown"
-        ratio = Fraction(width, height).limit_denominator(12)
-        return f"{ratio.numerator}:{ratio.denominator} (~{width/height:.2f}:1)"
+        ratio = width / height
+        if ratio < 0.9:
+            return "portrait, close to square"
+        if ratio > 1.25:
+            return "landscape, wide"
+        return "landscape, near-square"
 
     def _render_weather_sidebar_panel(self, weather, tz, forecast_days, sidebar_size):
         panel_w, panel_h = sidebar_size
@@ -668,7 +800,7 @@ class DailyCatWeather(BasePlugin):
         gap = max(6, int(pad * 0.5))
 
         title_font = self._font("Jost", max(14, int(panel_w * 0.085)), bold=True)
-        temp_font = self._font("Jost", max(18, int(panel_w * 0.18)), bold=True)
+        base_temp_font_size = max(18, int(panel_w * 0.18))
         small_font = self._font("Jost", max(12, int(panel_w * 0.065)))
 
         y = pad
@@ -691,14 +823,25 @@ class DailyCatWeather(BasePlugin):
 
         text_x = icon_x + icon_size + gap
         max_text_w = panel_w - pad - text_x
+        max_text_w = max(40, max_text_w)
 
-        line_gap = max(3, int(small_font.size * 0.35)) if hasattr(small_font, "size") else 4
+        def _fit_font(text, max_width, start_size, min_size=12):
+            size = start_size
+            while size > min_size:
+                font = self._font("Jost", size, bold=True)
+                if _text_size(text, font)[0] <= max_width:
+                    return font
+                size -= 2
+            return self._font("Jost", min_size, bold=True)
+
+        line_gap = max(6, int(getattr(small_font, "size", 14) * 0.55))
         y_cursor = icon_y
 
         for line in _wrap_text("Now", small_font, max_text_w, max_lines=1):
             draw.text((text_x, y_cursor), line, fill=(0, 0, 0), font=small_font)
             y_cursor += _text_size(line, small_font)[1] + line_gap
 
+        temp_font = _fit_font(f"{temp_value}{temp_unit}", max_text_w, base_temp_font_size, min_size=14)
         for line in _wrap_text(f"{temp_value}{temp_unit}", temp_font, max_text_w, max_lines=1):
             draw.text((text_x, y_cursor), line, fill=(0, 0, 0), font=temp_font)
             y_cursor += _text_size(line, temp_font)[1] + line_gap
@@ -706,7 +849,7 @@ class DailyCatWeather(BasePlugin):
         feels_line = f"Feels {feels_value}{temp_unit}"
         for line in _wrap_text(feels_line, small_font, max_text_w, max_lines=1):
             draw.text((text_x, y_cursor), line, fill=(0, 0, 0), font=small_font)
-            y_cursor += _text_size(line, small_font)[1] + line_gap
+            y_cursor += _text_size(line, small_font)[1] + line_gap + 2
 
         if desc:
             for line in _wrap_text(desc, small_font, max_text_w, max_lines=2):
@@ -736,6 +879,7 @@ class DailyCatWeather(BasePlugin):
         precip_x1 = panel_w - pad
         temp_x0 = pad + row_icon + gap
         temp_x1 = precip_x0 - gap
+        temp_x1 = max(temp_x0 + 40, temp_x1)
 
         for idx, day in enumerate(daily[:forecast_days]):
             row_y0 = y + idx * row_h
@@ -769,20 +913,19 @@ class DailyCatWeather(BasePlugin):
             panel.paste(icon_img, (pad, icon_y))
 
             day_y = row_y0 + row_pad
-            temp_y = day_y + _text_size(label, row_day_font)[1] + int(row_pad * 0.35)
-            temp_y = min(temp_y, row_y1 - row_pad - _text_size("0° / 0°", row_temp_font)[1])
-
             draw.text((temp_x0, day_y), label, fill=(0, 0, 0), font=row_day_font)
 
-            temps_line = f"{high}° / {low}°"
+            temps_line = f"H {high}  L {low}"
             if _text_size(temps_line, row_temp_font)[0] > (temp_x1 - temp_x0):
-                temps_line = f"H{high} L{low}"
-            draw.text((temp_x0, temp_y), temps_line, fill=(0, 0, 0), font=row_temp_font)
+                temps_line = f"{high}°/{low}°"
+            temps_y = day_y + _text_size(label, row_day_font)[1] + int(row_pad * 0.35)
+            temps_y = min(temps_y, row_y1 - row_pad - _text_size(temps_line, row_temp_font)[1])
+            draw.text((temp_x0, temps_y), temps_line, fill=(0, 0, 0), font=row_temp_font)
 
             precip_line = f"{pop}%"
-            pw, ph = _text_size(precip_line, row_temp_font)
-            precip_y = temp_y
+            pw, _ = _text_size(precip_line, row_temp_font)
             precip_x = precip_x1 - pw
+            precip_y = temps_y
             draw.text((precip_x, precip_y), precip_line, fill=(0, 0, 0), font=row_temp_font)
 
         return panel
@@ -885,7 +1028,7 @@ class DailyCatWeather(BasePlugin):
             orientation_hint = "landscape" if aspect_ratio == "16:9" else "portrait"
             prompt = (
                 f"{prompt}\n\n"
-                f"Output format: {orientation_hint} {aspect_ratio} aspect ratio, full-bleed, no borders."
+                f"Output format: {orientation_hint} orientation, full-bleed, no borders. No text or symbols."
             )
 
             normalized_model = _normalize_model_name(model)

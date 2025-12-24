@@ -2039,7 +2039,8 @@ class TelegramBotListener:
             "You rewrite user ideas into a single strong image-generation prompt for a children's book illustration. "
             "Preserve the core idea and keep it playful and imaginative. Always include: "
             "a larger-than-average (but not obese) orange-and-white cat (ginger tabby with a white chest and paws). "
-            "No text, no captions, no speech bubbles. Not photorealistic. Full-bleed scene. "
+            "No text, no captions, no speech bubbles, no letters, no numbers. Not photorealistic. Full-bleed scene. "
+            "Do not create panels, split layouts, frames, borders, dividers, or any weather widgets (thermometers/gauges/icons). "
             "Add composition, setting, mood, and a few concrete visual details without introducing new main subjects. "
             "Keep under 60 words. Return only the refined prompt."
         )
