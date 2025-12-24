@@ -32,6 +32,30 @@
 </div>
 
 <div class="form-group">
+    <label for="holidayTheming" class="form-label">Holiday Theming:</label>
+    <select id="holidayTheming" name="holidayTheming" class="form-input">
+        <option value="off">Off</option>
+        <option value="on">On</option>
+    </select>
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        When enabled, the daily background prompt adds subtle touches for the nearest holiday (no text in the artwork).
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="holidayRegion" class="form-label">Holiday Region:</label>
+    <select id="holidayRegion" name="holidayRegion" class="form-input">
+        <option value="ca_ab">Canada (Alberta)</option>
+        <option value="us">United States</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="holidayWindowDays" class="form-label">Holiday Window (days):</label>
+    <input type="number" id="holidayWindowDays" name="holidayWindowDays" min="0" max="60" step="1" class="form-input" value="14">
+</div>
+
+<div class="form-group">
     <label for="dailyRefreshTime" class="form-label">New Image Time (local):</label>
     <input id="dailyRefreshTime" class="time-input" type="time" name="dailyRefreshTime" step="300">
     <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
@@ -124,6 +148,9 @@
             document.getElementById('longitude').value = pluginSettings.longitude;
             document.getElementById('locationLabel').value = pluginSettings.locationLabel || '';
             document.getElementById('units').value = pluginSettings.units || 'metric';
+            document.getElementById('holidayTheming').value = (pluginSettings.holidayTheming || 'off').toLowerCase();
+            document.getElementById('holidayRegion').value = (pluginSettings.holidayRegion || 'ca_ab').toLowerCase();
+            document.getElementById('holidayWindowDays').value = pluginSettings.holidayWindowDays || '14';
             document.getElementById('dailyRefreshTime').value = pluginSettings.dailyRefreshTime || '04:00';
             document.getElementById('forecastDays').value = pluginSettings.forecastDays || '3';
             document.getElementById('imageModel').value = pluginSettings.imageModel || 'gemini-2.5-flash-image';
@@ -132,6 +159,9 @@
         } else {
             document.getElementById('locationLabel').value = '';
             document.getElementById('units').value = 'metric';
+            document.getElementById('holidayTheming').value = 'off';
+            document.getElementById('holidayRegion').value = 'ca_ab';
+            document.getElementById('holidayWindowDays').value = '14';
             document.getElementById('dailyRefreshTime').value = '04:00';
             document.getElementById('forecastDays').value = '3';
             document.getElementById('imageModel').value = 'gemini-2.5-flash-image';

@@ -7,7 +7,7 @@ import os
 import random
 import re
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from fractions import Fraction
 from io import BytesIO
 from typing import Any
@@ -57,7 +57,7 @@ GEMINI_IMAGE_CONFIG_UNSUPPORTED_MODELS = {
     "models/gemini-3-pro-image-preview",
 }
 
-PROMPT_VERSION = 5
+PROMPT_VERSION = 6
 DEFAULT_CAT_DESCRIPTION = (
     "a larger-than-average (but not obese) orange-and-white cat (orange/ginger coat with white chest and paws; no other fur colours)"
 )
@@ -116,6 +116,11 @@ class DailyCatWeather(BasePlugin):
         forecast_days = int(settings.get("forecastDays") or 3)
         forecast_days = max(1, min(5, forecast_days))
 
+        holiday_theming = str(settings.get("holidayTheming") or "off").strip().lower()
+        holiday_region = str(settings.get("holidayRegion") or "ca_ab").strip().lower()
+        holiday_window_days = int(settings.get("holidayWindowDays") or 14)
+        holiday_window_days = max(0, min(60, holiday_window_days))
+
         model = (settings.get("imageModel") or "gemini-2.5-flash-image").strip()
         if not model.startswith("gemini-"):
             raise RuntimeError("Image model must be a Gemini model (gemini-*).")
@@ -158,6 +163,9 @@ class DailyCatWeather(BasePlugin):
             "layout": "right_sidebar",
             "layout_version": LAYOUT_VERSION,
             "sidebar_ratio": SIDEBAR_WIDTH_RATIO,
+            "holiday_theming": holiday_theming,
+            "holiday_region": holiday_region,
+            "holiday_window_days": holiday_window_days,
         }
         if active_custom_prompt:
             fingerprint_values.update(
@@ -200,19 +208,37 @@ class DailyCatWeather(BasePlugin):
         if background is None:
             aspect_hint = self._format_aspect_hint(image_width, height)
             if active_custom_prompt:
+                holiday_hint = ""
+                if holiday_theming == "on" and holiday_window_days:
+                    holiday_hint = self._holiday_prompt_hint(
+                        now=now,
+                        tz=tz,
+                        region=holiday_region,
+                        window_days=holiday_window_days,
+                    )
                 prompt = self._build_custom_prompt(
                     weather,
                     active_custom_prompt,
                     reroll_nonce=reroll_nonce,
                     aspect_hint=aspect_hint,
+                    holiday_hint=holiday_hint,
                 )
             else:
+                holiday_hint = ""
+                if holiday_theming == "on" and holiday_window_days:
+                    holiday_hint = self._holiday_prompt_hint(
+                        now=now,
+                        tz=tz,
+                        region=holiday_region,
+                        window_days=holiday_window_days,
+                    )
                 prompt = self._build_prompt(
                     weather,
                     reroll_nonce=reroll_nonce,
                     cache_id=cache_id,
                     day_key=day_key,
                     aspect_hint=aspect_hint,
+                    holiday_hint=holiday_hint,
                 )
             background = self._generate_gemini_background(
                 api_key=gemini_key,
@@ -333,7 +359,7 @@ class DailyCatWeather(BasePlugin):
             daily=daily,
         )
 
-    def _build_prompt(self, weather, reroll_nonce=0, cache_id="default", day_key="", aspect_hint=""):
+    def _build_prompt(self, weather, reroll_nonce=0, cache_id="default", day_key="", aspect_hint="", holiday_hint=""):
         base = (
             "Children's book illustration of an ambitious cat on a wholesome daily mission. "
             f"Main character: {DEFAULT_CAT_DESCRIPTION}. "
@@ -362,6 +388,7 @@ class DailyCatWeather(BasePlugin):
             f"{base}"
             f"The scene matches today's weather: {weather.description}. "
             f"{constraints}"
+            f"{holiday_hint}"
             "Encourage creativity: pick an original setting and mission; avoid repeating the same scene across rerolls. "
             f"The cat is {activity}{accessories}. "
             f"Target aspect ratio: {aspect_hint}. "
@@ -376,7 +403,7 @@ class DailyCatWeather(BasePlugin):
             f"{SPECTRA6_INSTRUCTIONS}"
         )
 
-    def _build_custom_prompt(self, weather, user_prompt, reroll_nonce=0, aspect_hint=""):
+    def _build_custom_prompt(self, weather, user_prompt, reroll_nonce=0, aspect_hint="", holiday_hint=""):
         base = (
             "Children's book illustration of an ambitious cat on a wholesome daily mission. "
             f"Main character: {DEFAULT_CAT_DESCRIPTION}. "
@@ -401,6 +428,7 @@ class DailyCatWeather(BasePlugin):
         return (
             f"{base}"
             f"{weather_line}"
+            f"{holiday_hint}"
             f"{constraints}"
             "Use the following scene idea as the main direction (you may add small visual details, but do not add new main subjects): "
             f"{user_prompt}. "
@@ -415,6 +443,97 @@ class DailyCatWeather(BasePlugin):
             "The illustration must fill the entire canvas edge-to-edge (no white margins, no empty borders). "
             "Absolutely no text, labels, or numbers anywhere in the illustration."
             f"{SPECTRA6_INSTRUCTIONS}"
+        )
+
+    @staticmethod
+    def _nth_weekday_of_month(year, month, weekday, n):
+        # weekday: Monday=0..Sunday=6
+        d = date(year, month, 1)
+        delta = (weekday - d.weekday()) % 7
+        d = d + timedelta(days=delta + (n - 1) * 7)
+        return d
+
+    @staticmethod
+    def _easter_sunday(year):
+        # Anonymous Gregorian algorithm (Meeus/Jones/Butcher)
+        a = year % 19
+        b = year // 100
+        c = year % 100
+        d = b // 4
+        e = b % 4
+        f = (b + 8) // 25
+        g = (b - f + 1) // 3
+        h = (19 * a + b - d - g + 15) % 30
+        i = c // 4
+        k = c % 4
+        l = (32 + 2 * e + 2 * i - h - k) % 7
+        m = (a + 11 * h + 22 * l) // 451
+        month = (h + l - 7 * m + 114) // 31
+        day = ((h + l - 7 * m + 114) % 31) + 1
+        return date(year, month, day)
+
+    def _holiday_dates_for_region(self, year, region):
+        region = (region or "").strip().lower()
+
+        # Shared / widely recognized
+        easter = self._easter_sunday(year)
+        holidays = [
+            ("New Year's Day", date(year, 1, 1)),
+            ("Valentine's Day", date(year, 2, 14)),
+            ("Halloween", date(year, 10, 31)),
+            ("Christmas", date(year, 12, 25)),
+            ("Boxing Day", date(year, 12, 26)),
+            ("Easter", easter),
+        ]
+
+        if region in {"ca", "ca_ab", "canada"}:
+            # Alberta / Canada-friendly set (approx; not exhaustive).
+            holidays.extend(
+                [
+                    ("Family Day", self._nth_weekday_of_month(year, 2, weekday=0, n=3)),  # 3rd Monday Feb
+                    ("Canada Day", date(year, 7, 1)),
+                    ("Labour Day", self._nth_weekday_of_month(year, 9, weekday=0, n=1)),  # 1st Monday Sep
+                    ("Thanksgiving (Canada)", self._nth_weekday_of_month(year, 10, weekday=0, n=2)),  # 2nd Monday Oct
+                    ("Remembrance Day", date(year, 11, 11)),
+                ]
+            )
+        elif region in {"us", "usa", "united_states"}:
+            holidays.extend(
+                [
+                    ("Independence Day", date(year, 7, 4)),
+                    ("Labor Day", self._nth_weekday_of_month(year, 9, weekday=0, n=1)),  # 1st Monday Sep
+                    ("Thanksgiving (US)", self._nth_weekday_of_month(year, 11, weekday=3, n=4)),  # 4th Thu Nov
+                ]
+            )
+
+        return holidays
+
+    def _holiday_prompt_hint(self, now, tz, region, window_days):
+        today = now.astimezone(tz).date()
+        candidates = []
+        for yr in {today.year - 1, today.year, today.year + 1}:
+            for name, d in self._holiday_dates_for_region(yr, region):
+                delta_days = (d - today).days
+                if abs(delta_days) <= window_days:
+                    candidates.append((abs(delta_days), 0 if delta_days >= 0 else 1, delta_days, name, d))
+
+        if not candidates:
+            return ""
+
+        candidates.sort()
+        _, _, delta_days, name, d = candidates[0]
+
+        if delta_days == 0:
+            timing = f"Today is {name}."
+        elif delta_days > 0:
+            timing = f"Upcoming holiday: {name} in {delta_days} days."
+        else:
+            timing = f"Recent holiday: {name} was {abs(delta_days)} days ago."
+
+        return (
+            f"Holiday context: {timing} "
+            "Add subtle, tasteful holiday touches to the setting (decorations, props, mood) without turning it into a poster. "
+            "Do not add text, banners, signage, holiday greetings, or any written words. "
         )
 
     @staticmethod

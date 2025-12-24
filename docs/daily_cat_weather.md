@@ -17,6 +17,7 @@ See `docs/api_keys.md` for `.env` setup.
    - Location (lat/lon)
    - Optional `Location Label` (e.g. `Carstairs, AB`) to show at the top of the sidebar
    - Units
+   - Optional `Holiday Theming` to add subtle nearest-holiday touches to the daily background prompt
    - `New Image Time` = `04:00` (local time)
    - `Forecast Days` = `3`
    - Model = `gemini-2.5-flash-image`
