@@ -67,6 +67,11 @@ IMAGE_THEME_PRESETS = {
         "label": "Storybook",
         "hint": "Art direction: classic children's picture book illustration, friendly and whimsical. ",
     },
+    "cozy_anime": {
+        "label": "Cozy Anime (Cel-Paint)",
+        "hint": "Art direction: cozy anime-inspired cel-painted story illustration with simplified shapes and warm mood. "
+        "Must remain flat and high-contrast: no gradients, no watercolor paper texture, no brushstroke textures, no fine shading. ",
+    },
     "paper_cutout": {
         "label": "Paper Cutout",
         "hint": "Art direction: layered paper cutout collage, crisp shapes, playful textures (no gradients). ",
