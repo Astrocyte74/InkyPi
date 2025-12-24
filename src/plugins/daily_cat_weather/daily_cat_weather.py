@@ -795,6 +795,13 @@ class DailyCatWeather(BasePlugin):
                 lines[-1] = lines[-1] + "…"
             return lines
 
+        def _line_height(font):
+            try:
+                ascent, descent = font.getmetrics()
+                return max(1, int(ascent + descent))
+            except Exception:
+                return max(1, _text_size("Ag", font)[1])
+
         draw.line((0, 0, 0, panel_h), fill=(0, 0, 0))
         pad = max(10, int(panel_w * 0.06))
         gap = max(6, int(pad * 0.5))
@@ -834,27 +841,28 @@ class DailyCatWeather(BasePlugin):
                 size -= 2
             return self._font("Jost", min_size, bold=True)
 
-        line_gap = max(6, int(getattr(small_font, "size", 14) * 0.55))
+        small_lh = _line_height(small_font)
+        line_gap = max(6, int(small_lh * 0.35))
+        after_label_gap = max(6, int(small_lh * 0.25))
         y_cursor = icon_y
 
-        for line in _wrap_text("Now", small_font, max_text_w, max_lines=1):
-            draw.text((text_x, y_cursor), line, fill=(0, 0, 0), font=small_font)
-            y_cursor += _text_size(line, small_font)[1] + line_gap
+        draw.text((text_x, y_cursor), "Now", fill=(0, 0, 0), font=small_font)
+        y_cursor += small_lh + after_label_gap
 
         temp_font = _fit_font(f"{temp_value}{temp_unit}", max_text_w, base_temp_font_size, min_size=14)
-        for line in _wrap_text(f"{temp_value}{temp_unit}", temp_font, max_text_w, max_lines=1):
-            draw.text((text_x, y_cursor), line, fill=(0, 0, 0), font=temp_font)
-            y_cursor += _text_size(line, temp_font)[1] + line_gap
+        temp_lh = _line_height(temp_font)
+        after_temp_gap = max(line_gap + 4, int(temp_lh * 0.18))
+        draw.text((text_x, y_cursor), f"{temp_value}{temp_unit}", fill=(0, 0, 0), font=temp_font)
+        y_cursor += temp_lh + after_temp_gap
 
         feels_line = f"Feels {feels_value}{temp_unit}"
-        for line in _wrap_text(feels_line, small_font, max_text_w, max_lines=1):
-            draw.text((text_x, y_cursor), line, fill=(0, 0, 0), font=small_font)
-            y_cursor += _text_size(line, small_font)[1] + line_gap + 2
+        draw.text((text_x, y_cursor), feels_line, fill=(0, 0, 0), font=small_font)
+        y_cursor += small_lh + line_gap
 
         if desc:
             for line in _wrap_text(desc, small_font, max_text_w, max_lines=2):
                 draw.text((text_x, y_cursor), line, fill=(0, 0, 0), font=small_font)
-                y_cursor += _text_size(line, small_font)[1] + line_gap
+                y_cursor += small_lh + int(line_gap * 0.9)
 
         header_h = max(icon_size, y_cursor - icon_y)
         y = icon_y + header_h + pad
