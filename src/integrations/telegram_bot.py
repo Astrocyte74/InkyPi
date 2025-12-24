@@ -127,6 +127,7 @@ class TelegramBotListener:
         self.ss_menu_ids = {}
         self.pending_cat_reroll = set()
         self.pending_card_updates = set()
+        self.pending_card_bg_updates = set()
         # Slideshow state
         self.slideshow_thread = None
         self.slideshow_stop = threading.Event()
@@ -667,6 +668,38 @@ class TelegramBotListener:
                     group_id=group_id,
                 )
                 self._answer_callback(callback_query["id"])
+            elif action == "open" and target == "cardbg":
+                try:
+                    slot = int(parts[3]) if len(parts) > 3 else 1
+                except (TypeError, ValueError):
+                    slot = 1
+                self._send_daily_card_background_menu(chat_id, slot=slot, message_id=message_id, include_back=True)
+                self._answer_callback(callback_query["id"])
+            else:
+                self._answer_callback(callback_query["id"])
+            return
+
+        if flow_type == "cardbg":
+            chat_id = callback_query.get("message", {}).get("chat", {}).get("id")
+            message_id = callback_query.get("message", {}).get("message_id")
+            if not chat_id:
+                self._answer_callback(callback_query["id"])
+                return
+            try:
+                slot = int(parts[1]) if len(parts) > 1 else 1
+            except (TypeError, ValueError):
+                slot = 1
+            action = parts[2] if len(parts) > 2 else None
+            if action == "set" and len(parts) >= 4:
+                mode = parts[3]
+                self._set_daily_card_background(
+                    chat_id,
+                    slot=slot,
+                    mode=mode,
+                    menu_message_id=message_id,
+                    include_back=True,
+                )
+                self._answer_callback(callback_query["id"], text="Updating…")
             else:
                 self._answer_callback(callback_query["id"])
             return
@@ -2156,6 +2189,167 @@ class TelegramBotListener:
 
         return None, None
 
+    def _daily_card_bg_label(self, mode: str) -> str:
+        mode = (mode or "").strip().lower()
+        labels = {
+            "plain": "Plain",
+            "illustration": "Illustration",
+            "illustration_blur": "Illustration (Blur)",
+        }
+        return labels.get(mode, labels["plain"])
+
+    def _send_daily_card_background_menu(
+        self,
+        chat_id,
+        *,
+        slot=1,
+        message_id=None,
+        include_back=False,
+        status_line="",
+        selected_mode=None,
+    ):
+        current_dt = (
+            self.refresh_task._get_current_datetime()
+            if hasattr(self.refresh_task, "_get_current_datetime")
+            else datetime.utcnow()
+        )
+        playlist, plugin_instance = self._find_daily_theme_card_plugin_instance(current_dt, slot=slot)
+        if not playlist or not plugin_instance:
+            self._send_message(
+                chat_id,
+                f"Card {slot} isn't enabled yet. Add a `daily_theme_card` instance named `card{slot}` to a playlist.",
+            )
+            return
+
+        settings = plugin_instance.settings or {}
+        current_mode = (settings.get("backgroundMode") or "plain").strip().lower()
+        if current_mode not in {"plain", "illustration", "illustration_blur"}:
+            current_mode = "plain"
+        selected_mode = (selected_mode or current_mode).strip().lower()
+        if selected_mode not in {"plain", "illustration", "illustration_blur"}:
+            selected_mode = current_mode
+
+        lines = [
+            f"Card {slot} Background",
+            f"Current: {self._daily_card_bg_label(current_mode)} (`{current_mode}`)",
+        ]
+        if selected_mode != current_mode:
+            lines.append(f"Selected: {self._daily_card_bg_label(selected_mode)} (`{selected_mode}`)")
+        if status_line:
+            lines.extend(["", status_line])
+        lines.append("")
+        lines.append("Choose a background:")
+
+        def btn(mode: str):
+            label = self._daily_card_bg_label(mode)
+            text = f"✅ {label}" if mode == selected_mode else label
+            return {"text": text, "callback_data": f"cardbg|{slot}|set|{mode}"}
+
+        buttons = [
+            [btn("plain"), btn("illustration")],
+            [btn("illustration_blur")],
+        ]
+        if include_back:
+            buttons.append(
+                [
+                    {"text": "⬅️ Back", "callback_data": f"daily|open|card|{slot}"},
+                    {"text": "✖️ Close", "callback_data": "help|close"},
+                ]
+            )
+        else:
+            buttons.append([{"text": "✖️ Close", "callback_data": "help|close"}])
+
+        payload = {"chat_id": chat_id, "text": "\n".join(lines), "reply_markup": json.dumps({"inline_keyboard": buttons})}
+        if message_id:
+            payload["message_id"] = message_id
+            try:
+                self._api_post("editMessageText", data=payload)
+            except Exception as exc:
+                if "message is not modified" not in str(exc).lower():
+                    logger.exception("Failed to edit Card %s background menu.", slot)
+        else:
+            self._api_post("sendMessage", data=payload)
+
+    def _set_daily_card_background(self, chat_id, *, slot=1, mode="", menu_message_id=None, include_back=False):
+        mode = (mode or "").strip().lower()
+        if mode not in {"plain", "illustration", "illustration_blur"}:
+            self._send_message(chat_id, "Invalid background mode.")
+            return
+
+        if chat_id in self.pending_card_bg_updates:
+            self._send_message(chat_id, f"Card {slot} background is already updating…")
+            return
+
+        self.pending_card_bg_updates.add(chat_id)
+        if menu_message_id:
+            self._send_daily_card_background_menu(
+                chat_id,
+                slot=slot,
+                message_id=menu_message_id,
+                include_back=include_back,
+                status_line="Updating…",
+                selected_mode=mode,
+            )
+        else:
+            self._send_message(chat_id, f"Updating Card {slot} background…")
+
+        threading.Thread(
+            target=self._set_daily_card_background_worker,
+            args=(chat_id, slot, mode, menu_message_id, include_back),
+            name=f"TelegramCardBg{slot}-{chat_id}",
+            daemon=True,
+        ).start()
+
+    def _set_daily_card_background_worker(self, chat_id, slot, mode, menu_message_id=None, include_back=False):
+        try:
+            current_dt = (
+                self.refresh_task._get_current_datetime()
+                if hasattr(self.refresh_task, "_get_current_datetime")
+                else datetime.utcnow()
+            )
+            playlist, plugin_instance = self._find_daily_theme_card_plugin_instance(current_dt, slot=slot)
+            if not playlist or not plugin_instance:
+                self._send_message(
+                    chat_id,
+                    f"Card {slot} isn't enabled yet. Add a `daily_theme_card` instance named `card{slot}` to a playlist.",
+                )
+                return
+
+            plugin_instance.settings = plugin_instance.settings or {}
+            plugin_instance.settings["backgroundMode"] = mode
+            try:
+                self.device_config.write_config()
+            except Exception:
+                logger.exception("Failed to persist Card %s background mode.", slot)
+
+            if getattr(self.refresh_task, "running", False):
+                self.refresh_task.manual_update(PlaylistRefresh(playlist, plugin_instance, force=True))
+
+            try:
+                plugin_image_path = os.path.join(self.device_config.plugin_image_dir, plugin_instance.get_image_path())
+                caption = f"🖼 Card {slot} background set to {self._daily_card_bg_label(mode)}"
+                self._send_photo_path(chat_id, plugin_image_path, caption=caption)
+            except Exception:
+                logger.exception("Failed to send updated card image.")
+
+            if menu_message_id:
+                self._send_daily_card_background_menu(
+                    chat_id,
+                    slot=slot,
+                    message_id=menu_message_id,
+                    include_back=include_back,
+                    status_line="Updated ✅",
+                    selected_mode=mode,
+                )
+        except Exception as exc:
+            logger.exception("Card %s background update failed: %s", slot, exc)
+            self._send_message(chat_id, f"Card {slot} background update failed: {exc}")
+        finally:
+            try:
+                self.pending_card_bg_updates.discard(chat_id)
+            except Exception:
+                pass
+
     def _clear_daily_cat_cache(self, plugin_instance, current_dt):
         settings = plugin_instance.settings or {}
         cache_id = self._sanitize_cache_id(settings.get("cacheId") or "default")
@@ -2321,9 +2515,11 @@ class TelegramBotListener:
                 _, card_instance = self._find_daily_theme_card_plugin_instance(current_dt, slot=slot)
                 if card_instance:
                     card_id = ((card_instance.settings or {}).get("cardId") or "inspiration").strip().lower()
+                    bg_mode = ((card_instance.settings or {}).get("backgroundMode") or "plain").strip().lower()
+                    bg_label = self._daily_card_bg_label(bg_mode)
                     presets = self._daily_card_presets()
                     label = (presets.get(card_id, {}).get("label") if presets else None) or card_id
-                    line = f"Card {slot}: {label} (`{card_id}`)"
+                    line = f"Card {slot}: {label} (`{card_id}`) • {bg_label}"
                 else:
                     line = (
                         f"Card {slot}: not configured "
@@ -2546,6 +2742,8 @@ class TelegramBotListener:
                         }
                     ]
                 )
+
+            buttons.append([{"text": "🖼 Background", "callback_data": f"daily|open|cardbg|{slot}"}])
 
             if include_back:
                 buttons.append(

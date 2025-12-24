@@ -8,7 +8,7 @@ import re
 from datetime import datetime, time, timedelta
 
 import pytz
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from utils.app_utils import get_font, resolve_path
@@ -59,6 +59,11 @@ class DailyThemeCard(BasePlugin):
 
         card_id = self._normalize_id(settings.get("cardId") or DEFAULT_CARD_ID) or DEFAULT_CARD_ID
 
+        background_mode = (settings.get("backgroundMode") or "plain").strip().lower()
+        if background_mode not in {"plain", "illustration", "illustration_blur"}:
+            background_mode = "plain"
+        illustration_cache_id = (settings.get("illustrationCacheId") or "").strip()
+
         daily_refresh_time = self._parse_hhmm(settings.get("dailyRefreshTime") or "04:00")
         tz_str = device_config.get_config("timezone", default="UTC")
         tz = pytz.timezone(tz_str)
@@ -82,7 +87,21 @@ class DailyThemeCard(BasePlugin):
             logger.exception("Failed to fetch weather; continuing without sidebar data.")
 
         canvas = Image.new("RGB", (width, height), (255, 255, 255))
-        left = self._render_card_left_panel(card_id=card_id, day_key=day_key, size=(image_width, height))
+        base = None
+        if background_mode in {"illustration", "illustration_blur"}:
+            base = self._load_illustration_background(
+                device_config,
+                size=(image_width, height),
+                cache_id=illustration_cache_id,
+                blur=(background_mode == "illustration_blur"),
+            )
+        left = self._render_card_left_panel(
+            card_id=card_id,
+            day_key=day_key,
+            size=(image_width, height),
+            base=base,
+            draw_card_box=(background_mode != "plain"),
+        )
         try:
             banner = banner_from_env(device_config, now=now)
             if banner:
@@ -108,6 +127,71 @@ class DailyThemeCard(BasePlugin):
         )
         canvas.paste(panel, (image_width, 0))
         return canvas
+
+    @staticmethod
+    def _daily_cat_cache_dir(device_config):
+        return os.path.join(device_config.BASE_DIR, "..", "mock_display_output", "daily_cat_weather")
+
+    @staticmethod
+    def _cover_crop(img, size):
+        return ImageOps.fit(img, size, method=Image.LANCZOS, centering=(0.5, 0.5))
+
+    @classmethod
+    def _find_latest_cat_bg(cls, device_config, *, cache_id=""):
+        cache_dir = cls._daily_cat_cache_dir(device_config)
+        cache_id = (cache_id or "").strip()
+        if cache_id:
+            candidate = os.path.join(cache_dir, f"latest_bg_{cache_id}.png")
+            if os.path.exists(candidate):
+                return candidate
+
+        if not os.path.isdir(cache_dir):
+            return ""
+
+        latest_path = ""
+        latest_mtime = -1.0
+        try:
+            for name in os.listdir(cache_dir):
+                if not name.startswith("latest_bg_") or not name.endswith(".png"):
+                    continue
+                path = os.path.join(cache_dir, name)
+                try:
+                    mtime = os.path.getmtime(path)
+                except Exception:
+                    continue
+                if mtime > latest_mtime:
+                    latest_mtime = mtime
+                    latest_path = path
+        except Exception:
+            return ""
+
+        return latest_path
+
+    @classmethod
+    def _load_illustration_background(cls, device_config, *, size, cache_id="", blur=False):
+        path = cls._find_latest_cat_bg(device_config, cache_id=cache_id)
+        if not path:
+            return None
+        try:
+            with Image.open(path) as img:
+                bg = img.convert("RGB")
+        except Exception:
+            logger.exception("Failed to load illustration background: %s", path)
+            return None
+
+        if bg.size != size:
+            bg = cls._cover_crop(bg, size)
+
+        if blur:
+            radius = max(2, min(14, int(size[0] * 0.018)))
+            bg = bg.filter(ImageFilter.GaussianBlur(radius=radius))
+            bg = ImageEnhance.Brightness(bg).enhance(0.72)
+            bg = ImageEnhance.Color(bg).enhance(0.60)
+        else:
+            bg = ImageEnhance.Brightness(bg).enhance(0.86)
+            bg = ImageEnhance.Color(bg).enhance(0.85)
+
+        return bg
 
     @staticmethod
     def _normalize_id(value):
@@ -438,9 +522,12 @@ class DailyThemeCard(BasePlugin):
         candidates.sort(key=lambda t: t[0])
         return candidates[0][1]
 
-    def _render_card_left_panel(self, *, card_id, day_key, size):
+    def _render_card_left_panel(self, *, card_id, day_key, size, base=None, draw_card_box=False):
         w, h = size
-        img = Image.new("RGB", (w, h), (255, 255, 255))
+        if base is not None:
+            img = base.copy().convert("RGB")
+        else:
+            img = Image.new("RGB", (w, h), (255, 255, 255))
         draw = ImageDraw.Draw(img)
 
         spec = self._card_spec(card_id) or {"type": "quote", "items": []}
@@ -459,6 +546,7 @@ class DailyThemeCard(BasePlugin):
 
         pad = max(18, int(w * 0.07))
         max_w = w - pad * 2
+        card_pad = max(12, int(pad * 0.55))
 
         word_font = self._font("Jost", max(18, int(w * 0.12)), bold=True)
         body_size = max(16, int(w * 0.075))
@@ -505,6 +593,24 @@ class DailyThemeCard(BasePlugin):
         is_word = card_type == "word"
         is_family = card_type == "family"
 
+        def draw_box(y0, total_h):
+            if not draw_card_box:
+                return
+            x0 = pad
+            x1 = w - pad
+            y_top = max(pad, int(y0 - card_pad))
+            y_bot = min(h - pad, int(y0 + total_h + card_pad))
+            overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            od = ImageDraw.Draw(overlay)
+            radius = max(10, int(min(x1 - x0, y_bot - y_top) * 0.06))
+            try:
+                od.rounded_rectangle((x0, y_top, x1, y_bot), radius=radius, fill=(255, 255, 255, 235), outline=(0, 0, 0, 110), width=2)
+            except Exception:
+                od.rectangle((x0, y_top, x1, y_bot), fill=(255, 255, 255, 235))
+            img_rgba = img.convert("RGBA")
+            img_rgba.alpha_composite(overlay)
+            return img_rgba.convert("RGB")
+
         if is_family:
             md = str(pick.get("date") or "").strip()
             date_label = self._format_month_day(md) if md else ""
@@ -529,6 +635,10 @@ class DailyThemeCard(BasePlugin):
                 total_h += len(year_lines) * (line_height(year_font) + int(max(2, pad * 0.05)))
 
             y = max(pad, int((h - total_h) / 2))
+            boxed = draw_box(y, total_h)
+            if boxed is not None:
+                img = boxed
+                draw = ImageDraw.Draw(img)
             for line in date_lines:
                 draw.text((pad, y), line, fill=(0, 0, 0), font=date_font)
                 y += line_height(date_font) + int(max(2, pad * 0.05))
@@ -566,6 +676,10 @@ class DailyThemeCard(BasePlugin):
                 total_h += len(definition_lines) * (line_height(small_font) + int(max(2, pad * 0.04)))
 
             y = max(pad, int((h - total_h) / 2))
+            boxed = draw_box(y, total_h)
+            if boxed is not None:
+                img = boxed
+                draw = ImageDraw.Draw(img)
             for line in word_lines:
                 draw.text((pad, y), line, fill=(0, 0, 0), font=word_font)
                 y += line_height(word_font) + int(max(2, pad * 0.06))
@@ -588,6 +702,10 @@ class DailyThemeCard(BasePlugin):
             total_h = body_h + attr_h
 
             y = max(pad, int((h - total_h) / 2))
+            boxed = draw_box(y, total_h)
+            if boxed is not None:
+                img = boxed
+                draw = ImageDraw.Draw(img)
             for line in quote_lines:
                 draw.text((pad, y), line, fill=(0, 0, 0), font=body_font)
                 y += line_height(body_font) + int(max(2, pad * 0.08))

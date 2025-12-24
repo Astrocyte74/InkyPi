@@ -63,6 +63,26 @@
 </div>
 
 <div class="form-group">
+    <label for="backgroundMode" class="form-label">Card Background:</label>
+    <select id="backgroundMode" name="backgroundMode" class="form-input">
+        <option value="plain">Plain</option>
+        <option value="illustration">Use Illustration (no blur)</option>
+        <option value="illustration_blur">Use Illustration (blurred)</option>
+    </select>
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Uses the latest Daily Cat illustration (left panel) as the card background. If not found, falls back to plain.
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="illustrationCacheId" class="form-label">Illustration Cache ID (optional):</label>
+    <input type="text" id="illustrationCacheId" name="illustrationCacheId" placeholder="default" class="form-input">
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        If blank, uses the most recent cached illustration. Use this if you maintain multiple Daily Cat cache IDs.
+    </div>
+</div>
+
+<div class="form-group">
     <label for="cardRoot" class="form-label">Daily Card:</label>
     <select id="cardRoot" class="form-input">
         {% if card_leaf_choices %}
@@ -362,12 +382,16 @@
             document.getElementById('units').value = pluginSettings.units || 'metric';
             document.getElementById('dailyRefreshTime').value = pluginSettings.dailyRefreshTime || '04:00';
             document.getElementById('forecastDays').value = pluginSettings.forecastDays || '3';
+            document.getElementById('backgroundMode').value = (pluginSettings.backgroundMode || 'plain').toLowerCase();
+            document.getElementById('illustrationCacheId').value = pluginSettings.illustrationCacheId || '';
             $cardId.value = (pluginSettings.cardId || 'inspiration').toLowerCase();
         } else {
             document.getElementById('locationLabel').value = '';
             document.getElementById('units').value = 'metric';
             document.getElementById('dailyRefreshTime').value = '04:00';
             document.getElementById('forecastDays').value = '3';
+            document.getElementById('backgroundMode').value = 'plain';
+            document.getElementById('illustrationCacheId').value = '';
             $cardId.value = 'inspiration';
         }
 
