@@ -386,15 +386,19 @@ class TelegramBotListener:
         return path
 
     def _send_status(self, chat_id):
-        latest_path = os.path.join(self.storage_dir, "latest.png")
-        if not os.path.exists(latest_path):
-            self._send_message(chat_id, "No Telegram image yet. Send a photo to update the display.")
+        # Prefer the actual currently displayed image (works even when the image came from playlists/plugins).
+        current_path = getattr(self.device_config, "current_image_file", None)
+        if current_path and os.path.exists(current_path):
+            self._send_photo_path(chat_id, current_path, caption="Current display")
             return
 
-        with open(latest_path, "rb") as img_file:
-            files = {"photo": img_file}
-            data = {"chat_id": chat_id}
-            self._api_post("sendPhoto", data=data, files=files)
+        # Fallback: last Telegram-updated background
+        latest_path = os.path.join(self.storage_dir, "latest.png")
+        if os.path.exists(latest_path):
+            self._send_photo_path(chat_id, latest_path, caption="Last Telegram background")
+            return
+
+        self._send_message(chat_id, "No image available yet.")
 
     def _send_message(self, chat_id, text):
         return self._api_post(
@@ -1851,7 +1855,7 @@ class TelegramBotListener:
             "- Send a photo to set the display.",
             "- /ai a short prompt — generate an AI image (then tap Generate).",
             "- /txt a short note — generate a note (pick a background, then Render).",
-            "- /status — send the latest background preview.",
+            "- /status — send the current display preview.",
             "- /cat — regenerate today’s Daily Cat Weather background (if configured).",
             "- /cat <prompt> — set a custom scene for the rest of today (auto-enhanced).",
             "- /cat clear — go back to the auto scene generator.",
@@ -1884,7 +1888,7 @@ class TelegramBotListener:
         markup = {
             "inline_keyboard": [
                 [
-                    {"text": "🖼 Status", "callback_data": "help|status"},
+                    {"text": "🖼 Current", "callback_data": "help|status"},
                     {"text": "🤖 AI Image", "callback_data": "help|ai"},
                     {"text": "📝 Text", "callback_data": "help|txt"},
                 ],
