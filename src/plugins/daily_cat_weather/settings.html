@@ -95,18 +95,18 @@
 </div>
 
 <div class="form-group">
-    <label for="imageTheme" class="form-label">Cat Illustration Theme:</label>
+    <label for="imageTheme" class="form-label">Illustration Theme:</label>
     <select id="imageTheme" name="imageTheme" class="form-input">
-        <option value="storybook">Storybook</option>
-        <option value="cozy_anime">Cozy Anime (Cel-Paint)</option>
-        <option value="paper_cutout">Paper Cutout</option>
-        <option value="midcentury_poster">Mid-Century Poster</option>
-        <option value="comic">Comic</option>
-        <option value="linocut">Linocut Print</option>
-        <option value="woodblock">Woodblock</option>
+        {% if image_themes %}
+            {% for theme in image_themes %}
+                <option value="{{ theme.id }}">{{ theme.label }}</option>
+            {% endfor %}
+        {% else %}
+            <option value="storybook">Storybook</option>
+        {% endif %}
     </select>
     <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
-        Changes the art direction for the daily background (no text in the artwork).
+        Changes the art direction and (optionally) the subject for the daily background (no text in the artwork).
     </div>
 </div>
 

@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "themes": [
+    {
+      "id": "storybook",
+      "label": "Storybook Cat",
+      "character": {
+        "noun": "cat",
+        "prompt": "Main character: a larger-than-average (but not obese) orange-and-white cat (orange/ginger coat with a white chest and paws; no other fur colours)."
+      },
+      "style": {
+        "prompt": "PRIMARY art direction: classic children's picture book illustration. Friendly and whimsical. Simple shapes, charming proportions, playful details. Soft rounded linework and storybook staging.",
+        "avoid": "Avoid mid-century poster design. Avoid woodblock print styling. Avoid comic-book inking."
+      }
+    },
+    {
+      "id": "cozy_anime",
+      "label": "Cozy Anime Cat (Cel-Paint)",
+      "character": {
+        "noun": "cat",
+        "prompt": "Main character: a larger-than-average (but not obese) orange-and-white cat (orange/ginger coat with a white chest and paws; no other fur colours)."
+      },
+      "style": {
+        "prompt": "PRIMARY art direction: cozy anime-inspired cel-painted story illustration. Clean linework, simplified shapes, warm mood. Subtle cel-shading via flat tone steps only (no gradients).",
+        "avoid": "Avoid watercolor children's-book styling. Avoid poster design. Avoid woodblock print."
+      }
+    },
+    {
+      "id": "paper_cutout",
+      "label": "Paper Cutout Cat",
+      "character": {
+        "noun": "cat",
+        "prompt": "Main character: a larger-than-average (but not obese) orange-and-white cat (orange/ginger coat with a white chest and paws; no other fur colours)."
+      },
+      "style": {
+        "prompt": "PRIMARY art direction: layered paper-cutout collage. Crisp cut edges, stacked layers, bold color blocks. Suggest paper layering with clean offsets and edge shapes (no shading/gradients).",
+        "avoid": "Avoid comic inking. Avoid woodblock print. Avoid mid-century travel poster."
+      }
+    },
+    {
+      "id": "midcentury_poster",
+      "label": "Mid-Century Poster Cat",
+      "character": {
+        "noun": "cat",
+        "prompt": "Main character: a larger-than-average (but not obese) orange-and-white cat (orange/ginger coat with a white chest and paws; no other fur colours)."
+      },
+      "style": {
+        "prompt": "PRIMARY art direction: mid-century modern travel poster. Clean geometry, bold flat shapes, minimal detail, strong silhouette design, graphic composition. Screenprint feel via bold shapes and negative space (no texture).",
+        "avoid": "Avoid children's book illustration styling. Avoid anime/cel-paint. Avoid woodblock print."
+      }
+    },
+    {
+      "id": "comic",
+      "label": "Comic Cat",
+      "character": {
+        "noun": "cat",
+        "prompt": "Main character: a larger-than-average (but not obese) orange-and-white cat (orange/ginger coat with a white chest and paws; no other fur colours)."
+      },
+      "style": {
+        "prompt": "PRIMARY art direction: clean comic illustration. Bold black outlines, flat colors, graphic inking. Dynamic pose and strong contour lines. Single scene (NOT a multi-panel comic).",
+        "avoid": "Avoid watercolor/children's book styling. Avoid poster design. Avoid woodblock print."
+      }
+    },
+    {
+      "id": "linocut",
+      "label": "Linocut Print Cat",
+      "character": {
+        "noun": "cat",
+        "prompt": "Main character: a larger-than-average (but not obese) orange-and-white cat (orange/ginger coat with a white chest and paws; no other fur colours)."
+      },
+      "style": {
+        "prompt": "PRIMARY art direction: linocut print look. Chunky carved shapes, high contrast, simplified silhouettes. Slightly rough, carved edges implied by shape language (no texture). Flat colors only (no gradients).",
+        "avoid": "Avoid children's book illustration styling. Avoid anime/cel-paint. Avoid mid-century poster."
+      }
+    },
+    {
+      "id": "woodblock",
+      "label": "Japanese Woodblock Cat",
+      "character": {
+        "noun": "cat",
+        "prompt": "Main character: a larger-than-average (but not obese) orange-and-white cat (orange/ginger coat with a white chest and paws; no other fur colours)."
+      },
+      "style": {
+        "prompt": "PRIMARY art direction: Japanese ukiyo-e woodblock print. Strong silhouettes, flat colors, elegant curves, iconic framing, decorative negative space, stylized clouds/waves. Use classic ukiyo-e composition cues (asymmetry, horizon banding, patterned sky) without adding text.",
+        "avoid": "Avoid children's book illustration styling. Avoid modern vector-cartoon look. Avoid anime/cel-paint."
+      }
+    },
+
+    {
+      "id": "storybook_dog",
+      "label": "Storybook Dog",
+      "character": {
+        "noun": "dog",
+        "prompt": "Main character: a friendly, adventurous dog (medium-to-large size, athletic build, warm tan-and-white coat)."
+      },
+      "style": {
+        "prompt": "PRIMARY art direction: classic children's picture book illustration. Friendly and whimsical. Simple shapes, charming proportions, playful details.",
+        "avoid": "Avoid photorealism. Avoid comic-book inking. Avoid mid-century poster design."
+      }
+    },
+    {
+      "id": "abstract_art",
+      "label": "Abstract Weather Art (No Animal)",
+      "character": {
+        "noun": "composition",
+        "prompt": "Subject: abstract shapes and patterns expressing the weather mood (no animals, no people)."
+      },
+      "style": {
+        "prompt": "PRIMARY art direction: abstract modern art poster. Bold flat shapes, rhythmic patterns, strong composition, graphic design energy.",
+        "avoid": "Avoid cute character illustration. Avoid children's book style. Avoid photorealism."
+      }
+    }
+  ]
+}

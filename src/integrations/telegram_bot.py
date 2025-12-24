@@ -2090,23 +2090,26 @@ class TelegramBotListener:
             logger.exception("Failed to import AIImage helper; prompt enhancement disabled.")
             return user_prompt
 
-        theme_hint = ""
+        theme_prompt = ""
+        character_prompt = ""
         try:
             from plugins.daily_cat_weather.daily_cat_weather import DailyCatWeather  # local import
 
-            theme_hint = DailyCatWeather._theme_prompt_hint(theme_id)
+            theme_spec = DailyCatWeather._theme_spec(theme_id)
+            theme_prompt, character_prompt, _ = DailyCatWeather._theme_prompt_parts(theme_spec)
         except Exception:
-            theme_hint = ""
+            theme_prompt = ""
+            character_prompt = ""
 
         system_content = (
             "You rewrite user ideas into a single strong image-generation prompt. "
             "Preserve the core idea and keep it playful and imaginative. Always include: "
-            "a larger-than-average (but not obese) orange-and-white cat (orange/ginger coat with a white chest and paws; no other fur colours). "
+            f"{character_prompt} "
             "No text, no captions, no speech bubbles, no letters, no numbers. Not photorealistic. Full-bleed scene. "
             "Do not create panels, split layouts, frames, borders, dividers, or any weather widgets (thermometers/gauges/icons). "
             "Add composition, setting, mood, and a few concrete visual details without introducing new main subjects. "
-            f"{theme_hint}"
-            "Follow the PRIMARY art direction above strictly. "
+            f"{theme_prompt} "
+            "Follow the PRIMARY art direction above strictly (do not default to a generic style). "
             "Keep under 60 words. Return only the refined prompt."
         )
         user_content = f"User idea: \"{user_prompt.strip()}\""
@@ -2126,9 +2129,10 @@ class TelegramBotListener:
 
     def _daily_cat_theme_presets(self):
         try:
-            from plugins.daily_cat_weather.daily_cat_weather import IMAGE_THEME_PRESETS  # local import
+            from plugins.daily_cat_weather.daily_cat_weather import DailyCatWeather  # local import
 
-            return IMAGE_THEME_PRESETS or {}
+            catalog = DailyCatWeather._theme_catalog()
+            return {theme_id: {"label": spec.get("label") or theme_id} for theme_id, spec in (catalog or {}).items()}
         except Exception:
             return {}
 

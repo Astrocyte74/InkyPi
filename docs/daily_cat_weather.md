@@ -31,6 +31,13 @@ See `docs/api_keys.md` for `.env` setup.
 - At (and after) `04:00` local time, the next refresh generates a new background image for the day.
 - Between regenerations, the cached background is reused and only the weather overlay updates.
 
+## Themes (JSON Catalog)
+
+`Daily Cat Weather` themes are defined in `src/plugins/daily_cat_weather/themes.json`.
+
+- The `Illustration Theme` dropdown (Web UI) and `/theme` (Telegram) both read from this catalog.
+- You can add new themes (e.g., a dog variant or abstract art) by adding a new entry to the JSON file.
+
 ## Telegram Reroll
 
 - Run `/cat` (or tap `🐱 New Daily Cat` from `/help`) to delete today’s cached background and force a regenerate on the next refresh.

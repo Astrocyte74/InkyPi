@@ -57,47 +57,9 @@ GEMINI_IMAGE_CONFIG_UNSUPPORTED_MODELS = {
     "models/gemini-3-pro-image-preview",
 }
 
-PROMPT_VERSION = 8
-DEFAULT_CAT_DESCRIPTION = (
-    "a larger-than-average (but not obese) orange-and-white cat (orange/ginger coat with white chest and paws; no other fur colours)"
-)
-
-IMAGE_THEME_PRESETS = {
-    "storybook": {
-        "label": "Storybook",
-        "hint": "PRIMARY art direction: classic children's picture book illustration, friendly and whimsical. "
-        "Simple shapes, charming proportions, playful details (still flat colors). ",
-    },
-    "cozy_anime": {
-        "label": "Cozy Anime (Cel-Paint)",
-        "hint": "PRIMARY art direction: cozy anime-inspired cel-painted story illustration with simplified shapes and warm mood. "
-        "Must remain flat and high-contrast: no gradients, no watercolor paper texture, no brushstroke textures, no fine shading. ",
-    },
-    "paper_cutout": {
-        "label": "Paper Cutout",
-        "hint": "PRIMARY art direction: layered paper cutout collage. Crisp cut edges, stacked layers, simple shapes, bold color blocks (no gradients). ",
-    },
-    "midcentury_poster": {
-        "label": "Mid-Century Poster",
-        "hint": "PRIMARY art direction: mid-century modern travel poster. Clean geometry, bold flat shapes, minimal detail, strong silhouette design. "
-        "Avoid children's-book style; poster composition and graphic simplicity. ",
-    },
-    "comic": {
-        "label": "Comic",
-        "hint": "PRIMARY art direction: clean comic illustration with bold outlines and flat colors (single scene, not a panel). "
-        "Use graphic inked linework and simplified shapes. ",
-    },
-    "linocut": {
-        "label": "Linocut Print",
-        "hint": "PRIMARY art direction: linocut print look with chunky carved shapes and high contrast (still in flat colors). "
-        "Suggest a carved look via shape language (no heavy texture). ",
-    },
-    "woodblock": {
-        "label": "Woodblock",
-        "hint": "PRIMARY art direction: Japanese woodblock-inspired composition. Simplified shapes, flat colors, strong silhouettes, iconic framing. "
-        "Avoid modern children's-book styling. ",
-    },
-}
+PROMPT_VERSION = 9
+DEFAULT_THEME_ID = "storybook"
+THEME_CATALOG_PATH = resolve_path(os.path.join("plugins", "daily_cat_weather", "themes.json"))
 
 LAYOUT_VERSION = 1
 SIDEBAR_WIDTH_RATIO = 0.30
@@ -122,6 +84,7 @@ class DailyCatWeather(BasePlugin):
             "service": "Gemini + OpenWeatherMap",
             "expected_key": "GEMINI_API_KEY / OPEN_WEATHER_MAP_SECRET",
         }
+        template_params["image_themes"] = self._theme_choices()
         return template_params
 
     def generate_image(self, settings, device_config):
@@ -158,9 +121,8 @@ class DailyCatWeather(BasePlugin):
         holiday_window_days = int(settings.get("holidayWindowDays") or 14)
         holiday_window_days = max(0, min(60, holiday_window_days))
 
-        image_theme = (settings.get("imageTheme") or "storybook").strip().lower()
-        if image_theme not in IMAGE_THEME_PRESETS:
-            image_theme = "storybook"
+        image_theme = self._normalize_theme_id(settings.get("imageTheme") or DEFAULT_THEME_ID) or DEFAULT_THEME_ID
+        theme_spec = self._theme_spec(image_theme)
 
         model = (settings.get("imageModel") or "gemini-2.5-flash-image").strip()
         if not model.startswith("gemini-"):
@@ -207,7 +169,7 @@ class DailyCatWeather(BasePlugin):
             "holiday_theming": holiday_theming,
             "holiday_region": holiday_region,
             "holiday_window_days": holiday_window_days,
-            "image_theme": image_theme,
+            "image_theme": (theme_spec or {}).get("id") or image_theme,
         }
         if active_custom_prompt:
             fingerprint_values.update(
@@ -264,7 +226,7 @@ class DailyCatWeather(BasePlugin):
                     reroll_nonce=reroll_nonce,
                     aspect_hint=aspect_hint,
                     holiday_hint=holiday_hint,
-                    theme_hint=self._theme_prompt_hint(image_theme),
+                    theme_spec=theme_spec,
                 )
             else:
                 holiday_hint = ""
@@ -282,7 +244,7 @@ class DailyCatWeather(BasePlugin):
                     day_key=day_key,
                     aspect_hint=aspect_hint,
                     holiday_hint=holiday_hint,
-                    theme_hint=self._theme_prompt_hint(image_theme),
+                    theme_spec=theme_spec,
                 )
             background = self._generate_gemini_background(
                 api_key=gemini_key,
@@ -411,13 +373,14 @@ class DailyCatWeather(BasePlugin):
         day_key="",
         aspect_hint="",
         holiday_hint="",
-        theme_hint="",
+        theme_spec=None,
     ):
+        theme_spec = theme_spec or self._theme_spec(DEFAULT_THEME_ID)
+        theme_prompt, character_prompt, character_noun = self._theme_prompt_parts(theme_spec)
         base = (
-            f"{theme_hint}"
-            "Illustration of an ambitious cat on a wholesome daily mission. "
-            f"Main character: {DEFAULT_CAT_DESCRIPTION}. "
-            "The cat's fur is strictly orange and white (no other fur colours). "
+            f"{theme_prompt} "
+            "Illustration of an ambitious, wholesome daily mission. "
+            f"{character_prompt} "
             "Follow the PRIMARY art direction above strictly (do not default to a generic style). "
             "Keep it lighthearted and amusing (not photorealistic). "
             "No text, no captions, no speech bubbles. "
@@ -426,7 +389,7 @@ class DailyCatWeather(BasePlugin):
         if not weather:
             return (
                 f"{base}"
-                "Choose a fresh, creative mission for the cat and an interesting setting. "
+                "Choose a fresh, creative mission for the character and an interesting setting. "
                 f"{SPECTRA6_INSTRUCTIONS}"
             )
 
@@ -445,7 +408,7 @@ class DailyCatWeather(BasePlugin):
             f"{constraints}"
             f"{holiday_hint}"
             "Encourage creativity: pick an original setting and mission; avoid repeating the same scene across rerolls. "
-            f"The cat is {activity}{accessories}. "
+            f"The {character_noun} is {activity}{accessories}. "
             f"Target aspect ratio: {aspect_hint}. "
             "Composition guidance: the final layout uses a dedicated weather sidebar on the right, so keep the main "
             "story action and characters centered and slightly left-of-center (avoid placing key details near the far "
@@ -465,13 +428,14 @@ class DailyCatWeather(BasePlugin):
         reroll_nonce=0,
         aspect_hint="",
         holiday_hint="",
-        theme_hint="",
+        theme_spec=None,
     ):
+        theme_spec = theme_spec or self._theme_spec(DEFAULT_THEME_ID)
+        theme_prompt, character_prompt, _ = self._theme_prompt_parts(theme_spec)
         base = (
-            f"{theme_hint}"
-            "Illustration of an ambitious cat on a wholesome daily mission. "
-            f"Main character: {DEFAULT_CAT_DESCRIPTION}. "
-            "The cat's fur is strictly orange and white (no other fur colours). "
+            f"{theme_prompt} "
+            "Illustration of an ambitious, wholesome daily mission. "
+            f"{character_prompt} "
             "Follow the PRIMARY art direction above strictly (do not default to a generic style). "
             "Keep it lighthearted and amusing (not photorealistic). "
             "No text, no captions, no speech bubbles. "
@@ -511,10 +475,95 @@ class DailyCatWeather(BasePlugin):
         )
 
     @classmethod
-    def _theme_prompt_hint(cls, theme_id):
-        theme_id = (theme_id or "").strip().lower()
-        preset = IMAGE_THEME_PRESETS.get(theme_id) or IMAGE_THEME_PRESETS["storybook"]
-        return preset.get("hint") or ""
+    def _load_theme_catalog(cls):
+        try:
+            with open(THEME_CATALOG_PATH, "r", encoding="utf-8") as handle:
+                payload = json.load(handle) or {}
+        except Exception:
+            logger.exception("Failed to load theme catalog: %s", THEME_CATALOG_PATH)
+            payload = {}
+
+        themes = payload.get("themes") if isinstance(payload, dict) else None
+        if not isinstance(themes, list):
+            themes = []
+
+        by_id = {}
+        for theme in themes:
+            if not isinstance(theme, dict):
+                continue
+            theme_id = cls._normalize_theme_id(theme.get("id"))
+            if not theme_id:
+                continue
+
+            label = str(theme.get("label") or theme_id).strip() or theme_id
+            character = theme.get("character") if isinstance(theme.get("character"), dict) else {}
+            style = theme.get("style") if isinstance(theme.get("style"), dict) else {}
+            by_id[theme_id] = {
+                "id": theme_id,
+                "label": label,
+                "character": {
+                    "noun": str(character.get("noun") or "character").strip() or "character",
+                    "prompt": str(character.get("prompt") or "").strip(),
+                },
+                "style": {
+                    "prompt": str(style.get("prompt") or "").strip(),
+                    "avoid": str(style.get("avoid") or "").strip(),
+                },
+            }
+
+        if DEFAULT_THEME_ID not in by_id and by_id:
+            first = next(iter(by_id.values()))
+            by_id[DEFAULT_THEME_ID] = dict(first, id=DEFAULT_THEME_ID, label=f"{first.get('label')} (alias)")
+
+        if DEFAULT_THEME_ID not in by_id:
+            by_id[DEFAULT_THEME_ID] = {
+                "id": DEFAULT_THEME_ID,
+                "label": "Storybook Cat",
+                "character": {"noun": "cat", "prompt": "Main character: a friendly orange-and-white cat."},
+                "style": {"prompt": "PRIMARY art direction: classic children's picture book illustration.", "avoid": ""},
+            }
+
+        return by_id
+
+    @classmethod
+    def _theme_catalog(cls):
+        cache = getattr(cls, "_theme_catalog_cache", None)
+        if cache is None:
+            cache = cls._load_theme_catalog()
+            cls._theme_catalog_cache = cache
+        return cache
+
+    @staticmethod
+    def _normalize_theme_id(value):
+        return re.sub(r"[^a-z0-9_]+", "", (value or "").strip().lower())
+
+    @classmethod
+    def _theme_spec(cls, theme_id):
+        theme_id = cls._normalize_theme_id(theme_id) or DEFAULT_THEME_ID
+        catalog = cls._theme_catalog()
+        return catalog.get(theme_id) or catalog.get(DEFAULT_THEME_ID)
+
+    @classmethod
+    def _theme_choices(cls):
+        catalog = cls._theme_catalog()
+        items = list(catalog.values())
+        items.sort(key=lambda t: (t.get("id") != DEFAULT_THEME_ID, str(t.get("label") or t.get("id"))))
+        return [{"id": t.get("id"), "label": t.get("label")} for t in items]
+
+    @classmethod
+    def _theme_prompt_parts(cls, theme_spec):
+        theme_spec = theme_spec or cls._theme_spec(DEFAULT_THEME_ID)
+        style_prompt = (theme_spec.get("style") or {}).get("prompt") or ""
+        style_avoid = (theme_spec.get("style") or {}).get("avoid") or ""
+        character = theme_spec.get("character") or {}
+        character_prompt = character.get("prompt") or ""
+        character_noun = (character.get("noun") or "character").strip() or "character"
+
+        bits = [style_prompt.strip()]
+        if style_avoid.strip():
+            bits.append(style_avoid.strip())
+        theme_prompt = " ".join(bit for bit in bits if bit)
+        return theme_prompt.strip(), character_prompt.strip(), character_noun
 
     @staticmethod
     def _nth_weekday_of_month(year, month, weekday, n):
@@ -642,7 +691,7 @@ class DailyCatWeather(BasePlugin):
                 ("helping build a snowcat sculpture for the neighborhood", " bundled up with earmuffs"),
             ]
             activity, accessories = rng.choice(choices)
-            return activity, accessories, "Snowy conditions: bundle the cat up in winter gear. "
+            return activity, accessories, "Snowy conditions: bundle the character up in winter gear. "
         if "rain" in description or "drizzle" in description or "storm" in description:
             choices = [
                 ("puddle-jumping heroically on the way to deliver a letter", accessories_rain),
@@ -650,7 +699,7 @@ class DailyCatWeather(BasePlugin):
                 ("rescuing a tiny lost toy from the rain", accessories_rain),
             ]
             activity, accessories = rng.choice(choices)
-            return activity, accessories, "Rainy conditions: give the cat rain gear. "
+            return activity, accessories, "Rainy conditions: give the character rain gear. "
         if "fog" in description or "mist" in description or "haze" in description:
             choices = [
                 ("navigating with a little compass like an explorer", " with an explorer hat"),
@@ -675,7 +724,7 @@ class DailyCatWeather(BasePlugin):
                 ("trying snowshoe steps with homemade paw 'skis'", " bundled up with a beanie"),
             ]
             activity, accessories = rng.choice(choices)
-            return activity, accessories, "Cold: bundle up the cat in warm clothing. "
+            return activity, accessories, "Cold: bundle up the character in warm clothing. "
         if temp_c >= 28:
             choices = [
                 ("leading a garden watering mission and chasing sunbeams", " wearing sunglasses"),
