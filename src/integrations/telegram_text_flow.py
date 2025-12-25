@@ -6,7 +6,7 @@ from typing import Dict
 import pytz
 
 from openai import OpenAI
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from model import RefreshInfo
 from plugins.ai_image.ai_image import AIImage
@@ -31,10 +31,10 @@ class TelegramTextFlow:
     ]
 
     BACKGROUND_OPTIONS = [
-        ("none", "None"),
-        ("latest", "Use Last Image"),
+        ("none", "Plain"),
+        ("illustration_blur", "Illustration (Blur)"),
+        ("illustration", "Illustration"),
         ("ai_image", "Auto-Generate Image"),
-        ("weather", "Live Weather"),
         ("color", "Solid Colour"),
         ("saved", "Saved Image"),
         ("custom_ai", "Custom Image (Prompt)"),
@@ -88,14 +88,14 @@ class TelegramTextFlow:
             "text": text.strip(),
             "style": "caption",
             "rewrite": False,
-            "background": "none",
+            "background": "illustration_blur",
             "message_id": None,
             "locked": False,
             "awaiting_background": False,
             "custom_background": None,
             "image_prompt": text.strip(),
             "awaiting_prompt": False,
-            "bg_selected": False,
+            "bg_selected": True,
             # Inline custom background configuration state
             "bg_mode": "summary",  # summary | bg_config
             "bg_model": self.AI_MODELS[0][0],
@@ -106,8 +106,6 @@ class TelegramTextFlow:
             "awaiting_saved": False,
             "saved_name": None,
             "saved_page": 0,
-            "wbadge": False,
-            "woverlay": False,
             "final_text_preview": None,
         }
         self.requests[request_id] = data
@@ -199,15 +197,15 @@ class TelegramTextFlow:
             text = f"{label} {'✅' if active else ''}".strip()
             return {"text": text, "callback_data": f"txt|{request_id}|background|{value}"}
 
-        # Split background options across three rows for clarity and longer labels
+        # Split background options across multiple rows for clarity and longer labels
         bg_rows = [
             [
-                bg_btn("none", "None"),
-                bg_btn("ai_image", "Auto-Generate Image"),
+                bg_btn("none", "Plain"),
+                bg_btn("illustration_blur", "Illustration (Blur)"),
             ],
             [
-                bg_btn("latest", "Use Last Image"),
-                bg_btn("weather", "Live Weather"),
+                bg_btn("illustration", "Illustration"),
+                bg_btn("ai_image", "Auto-Generate Image"),
             ],
             [
                 bg_btn("color", "Solid Colour"),
@@ -216,21 +214,11 @@ class TelegramTextFlow:
             ],
         ]
 
-        # Labels above each section for clarity
-        # Weather selection row (Off / Badge / Overlay / Options)
-        is_off = not request.get("wbadge") and not request.get("woverlay")
         keyboard = [
             [{"text": "Choose style:", "callback_data": f"txt|{request_id}|noop"}],
             style_row,
             [{"text": "Rewrite:", "callback_data": f"txt|{request_id}|noop"}],
             rewrite_row,
-            [{"text": "Weather:", "callback_data": f"txt|{request_id}|noop"}],
-            [
-                {"text": f"Off {'✅' if is_off else ''}".strip(), "callback_data": f"txt|{request_id}|woff"},
-                {"text": f"Badge {'✅' if request.get('wbadge') else ''}".strip(), "callback_data": f"txt|{request_id}|wbadge|on"},
-                {"text": f"Overlay {'✅' if request.get('woverlay') else ''}".strip(), "callback_data": f"txt|{request_id}|wover|on"},
-                {"text": "Options", "callback_data": "wx|open"},
-            ],
             [{"text": "Pick background:", "callback_data": f"txt|{request_id}|noop"}],
         ]
         keyboard.extend(bg_rows)
@@ -274,8 +262,6 @@ class TelegramTextFlow:
         elif request.get("bg_selected") and request.get("background") == "saved":
             # Saved image picker with pagination
             names = self._list_saved_names()
-            # Only show background-type saves to avoid text-on-text
-            names = [n for n in names if n.startswith("bg_") or n.startswith("txtbg_")]
             page = int(request.get("saved_page") or 0)
             page_size = 6
             total_pages = max(1, (len(names) + page_size - 1) // page_size)
@@ -329,7 +315,7 @@ class TelegramTextFlow:
             if request.get("bg_selected"):
                 bg = request.get("background")
                 ready = False
-                if bg in {"none", "ai_image", "latest"}:
+                if bg in {"none", "ai_image", "illustration", "illustration_blur"}:
                     ready = True
                 elif bg == "color" and request.get("bg_color_choice"):
                     ready = True
@@ -377,7 +363,11 @@ class TelegramTextFlow:
 
     def cycle_background(self, request):
         keys = [value for value, _ in self.BACKGROUND_OPTIONS]
-        current_index = keys.index(request["background"])
+        current = request.get("background")
+        try:
+            current_index = keys.index(current)
+        except ValueError:
+            current_index = 0
         request["background"] = keys[(current_index + 1) % len(keys)]
         request["bg_selected"] = True
         if request["background"] != "custom_ai":
@@ -404,6 +394,8 @@ class TelegramTextFlow:
         request["final_text_preview"] = None
 
     def set_background(self, request, background):
+        aliases = {"latest": "illustration_blur", "weather": "illustration_blur"}
+        background = aliases.get(background, background)
         keys = [value for value, _ in self.BACKGROUND_OPTIONS]
         if background in keys:
             request["background"] = background
@@ -516,7 +508,7 @@ class TelegramTextFlow:
 
     # --- Final rendering ---------------------------------------------------
 
-    def finalize(self, request):
+    def finalize(self, request, *, target_size=None):
         # Use precomputed preview when available to keep summary consistent
         final_text = request.get("final_text_preview") or request["text"]
         if request.get("rewrite") and not request.get("final_text_preview"):
@@ -528,23 +520,32 @@ class TelegramTextFlow:
                 logger.exception("Failed to rewrite Telegram text: %s", exc)
                 raise RuntimeError("Failed to rewrite text via AI service.")
 
+        if not target_size:
+            width, height = self.device_config.get_resolution()
+            if self.device_config.get_config("orientation") == "vertical":
+                width, height = height, width
+            target_size = (width, height)
+
         background_path = None
         background_color = None
         background_mode = request.get("background")
         placement = "center"
+        # Backward compatibility for older keyboards.
         if background_mode == "latest":
-            # Prefer the latest base image saved by Telegram (non-text),
-            # fall back to the displayed image if not available.
-            telegram_latest = os.path.join(self.storage_dir, "latest.png")
-            candidate = telegram_latest if os.path.exists(telegram_latest) else self.device_config.current_image_file
-            if candidate and os.path.exists(candidate):
-                background_path = candidate
-            else:
-                logger.warning("Latest display image not found; using solid background.")
+            background_mode = "illustration_blur"
+        if background_mode == "weather":
+            background_mode = "illustration_blur"
+
+        if background_mode == "illustration_blur":
+            background_path = self._prepare_illustration_background(size=target_size, blur=True)
+            if not background_path:
+                logger.warning("No illustration background available; using plain background.")
+        elif background_mode == "illustration":
+            background_path = self._prepare_illustration_background(size=target_size, blur=False)
+            if not background_path:
+                logger.warning("No illustration background available; using plain background.")
         elif background_mode == "ai_image":
             background_path = self._generate_ai_background(final_text)
-        elif background_mode == "weather":
-            background_path = self._generate_weather_background()
         elif background_mode == "custom_ai":
             background_path = request.get("custom_background")
             if not background_path:
@@ -563,7 +564,7 @@ class TelegramTextFlow:
                 raise RuntimeError("Saved image not found.")
             background_path = candidate
         # If an image background is used, default placement to bottom band
-        if background_mode in {"ai_image", "custom_ai", "latest", "saved", "weather"}:
+        if background_mode in {"ai_image", "custom_ai", "saved", "illustration", "illustration_blur"}:
             placement = "bottom"
 
         # Persist last background used for /txt to allow saving later
@@ -572,28 +573,16 @@ class TelegramTextFlow:
         except Exception:
             logger.exception("Failed to persist last text background.")
 
-        image = self._render_text_image(final_text, request.get("style"), background_path, background_color, placement)
-        # Optional weather badge overlay
-        if request.get("wbadge"):
-            try:
-                image = self.overlay_weather_badge(image)
-            except Exception:
-                logger.exception("Failed to overlay weather badge.")
-        # Optional per-request or global full overlay
-        try:
-            opts = self._get_telegram_weather_options()
-            apply_overlay = bool(request.get("woverlay")) or bool(opts.get("weather", {}).get("overlay", {}).get("enabled"))
-            if apply_overlay:
-                image = self.overlay_weather_caption(image)
-        except Exception:
-            logger.exception("Failed to overlay full weather caption.")
-        saved_path = self._save_image(image)
-        self._display_image(image, final_text)
+        image = self._render_text_image(
+            final_text,
+            request.get("style"),
+            background_path,
+            background_color,
+            placement,
+            target_size=target_size,
+        )
 
-        return {
-            "image_path": saved_path,
-            "message": final_text,
-        }
+        return {"image": image, "message": final_text}
 
     # --- Preview helpers ----------------------------------------------------
 
@@ -612,17 +601,20 @@ class TelegramTextFlow:
 
     def _persist_last_text_background(self, background_path, background_color):
         dest = os.path.join(self.storage_dir, "last_text_background.png")
+        width, height = self.device_config.get_resolution()
+        if self.device_config.get_config("orientation") == "vertical":
+            width, height = height, width
         if background_color:
             # Create a solid colour background matching device resolution
-            width, height = self.device_config.get_resolution()
-            if self.device_config.get_config("orientation") == "vertical":
-                width, height = height, width
             img = Image.new("RGB", (width, height), background_color)
             img.save(dest)
         elif background_path and os.path.exists(background_path):
             # Copy by reopening and re-saving to ensure a valid PNG at dest
             with Image.open(background_path) as img:
-                img.convert("RGB").save(dest)
+                bg = img.convert("RGB")
+                if bg.size != (width, height):
+                    bg = self._cover_crop(bg, (width, height))
+                bg.save(dest)
 
     # --- Weather badge overlay ---------------------------------------------
 
@@ -915,6 +907,81 @@ class TelegramTextFlow:
         logger.info("Generated AI background for Telegram text at %s", path)
         return path
 
+    @staticmethod
+    def _daily_cat_cache_dir(device_config):
+        return os.path.join(device_config.BASE_DIR, "..", "mock_display_output", "daily_cat_weather")
+
+    @staticmethod
+    def _cover_crop(img, size):
+        return ImageOps.fit(img, size, method=Image.LANCZOS, centering=(0.5, 0.5))
+
+    @classmethod
+    def _find_latest_cat_bg(cls, device_config, *, cache_id=""):
+        cache_dir = cls._daily_cat_cache_dir(device_config)
+        cache_id = (cache_id or "").strip()
+        if cache_id:
+            candidate = os.path.join(cache_dir, f"latest_bg_{cache_id}.png")
+            if os.path.exists(candidate):
+                return candidate
+
+        if not os.path.isdir(cache_dir):
+            return ""
+
+        latest_path = ""
+        latest_mtime = -1.0
+        try:
+            for name in os.listdir(cache_dir):
+                if not name.startswith("latest_bg_") or not name.endswith(".png"):
+                    continue
+                path = os.path.join(cache_dir, name)
+                try:
+                    mtime = os.path.getmtime(path)
+                except Exception:
+                    continue
+                if mtime > latest_mtime:
+                    latest_mtime = mtime
+                    latest_path = path
+        except Exception:
+            return ""
+
+        return latest_path
+
+    def _prepare_illustration_background(self, *, size, cache_id="", blur=False):
+        path = self._find_latest_cat_bg(self.device_config, cache_id=cache_id)
+        if not path:
+            return ""
+
+        try:
+            with Image.open(path) as img:
+                bg = img.convert("RGB")
+        except Exception:
+            logger.exception("Failed to load illustration background: %s", path)
+            return ""
+
+        if bg.size != size:
+            bg = self._cover_crop(bg, size)
+
+        if blur:
+            radius = max(2, min(14, int(size[0] * 0.018)))
+            bg = bg.filter(ImageFilter.GaussianBlur(radius=radius))
+            bg = ImageEnhance.Brightness(bg).enhance(0.72)
+            bg = ImageEnhance.Color(bg).enhance(0.60)
+        else:
+            bg = ImageEnhance.Brightness(bg).enhance(0.86)
+            bg = ImageEnhance.Color(bg).enhance(0.85)
+
+        safe_cache = "".join(c for c in (cache_id or "auto") if c.isalnum() or c in {"-", "_"}).strip("-_")
+        safe_cache = safe_cache or "auto"
+        mode = "blur" if blur else "plain"
+        filename = f"telegram_text_ill_bg_{safe_cache}_{size[0]}x{size[1]}_{mode}.png"
+        out_path = os.path.join(self.storage_dir, filename)
+        try:
+            bg.save(out_path)
+        except Exception:
+            logger.exception("Failed to write illustration background: %s", out_path)
+            return ""
+        return out_path
+
     def _generate_weather_background(self):
         plugin, settings = self._get_weather_plugin_and_settings()
         if not plugin:
@@ -928,7 +995,7 @@ class TelegramTextFlow:
         logger.info("Generated Weather background for Telegram text at %s", path)
         return path
 
-    def _render_text_image(self, text, style, background_path, background_color=None, placement="center"):
+    def _render_text_image(self, text, style, background_path, background_color=None, placement="center", target_size=None):
         plugin = self._get_text_plugin()
         if not plugin:
             raise RuntimeError("Telegram Text plugin is not registered.")
@@ -938,6 +1005,8 @@ class TelegramTextFlow:
             "style": style,
             "background_path": background_path,
         }
+        if target_size:
+            settings["target_size"] = target_size
         if background_color:
             settings["background_color"] = background_color
         if placement:

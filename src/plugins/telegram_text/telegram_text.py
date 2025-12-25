@@ -36,9 +36,18 @@ class TelegramText(BasePlugin):
         if placement not in {"center", "bottom"}:
             placement = "center"
 
-        width, height = device_config.get_resolution()
-        if device_config.get_config("orientation") == "vertical":
-            width, height = height, width
+        target_size = settings.get("target_size")
+        if (
+            isinstance(target_size, (list, tuple))
+            and len(target_size) == 2
+            and all(isinstance(x, (int, float, str)) for x in target_size)
+        ):
+            width = int(float(target_size[0]))
+            height = int(float(target_size[1]))
+        else:
+            width, height = device_config.get_resolution()
+            if device_config.get_config("orientation") == "vertical":
+                width, height = height, width
 
         base_image = self._prepare_background(width, height, background_path, background_color)
 

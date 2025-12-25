@@ -589,14 +589,14 @@ class TelegramBotListener:
             logger.exception("Failed to handle Telegram photo: %s", exc)
             self._send_message(chat_id, f"Failed to update display: {exc}")
 
-    def _display_image(self, image):
+    def _display_image(self, image, *, refresh_type="Telegram", plugin_id="telegram_bot"):
         current_dt = self.refresh_task._get_current_datetime() if hasattr(self.refresh_task, "_get_current_datetime") else datetime.utcnow()
         image_hash = compute_image_hash(image)
         self.display_manager.display_image(image)
 
         refresh_info = RefreshInfo(
-            refresh_type="Telegram",
-            plugin_id="telegram_bot",
+            refresh_type=refresh_type,
+            plugin_id=plugin_id,
             refresh_time=current_dt.isoformat(),
             image_hash=image_hash,
         )
@@ -609,6 +609,15 @@ class TelegramBotListener:
         image.save(path)
 
         latest_path = os.path.join(self.storage_dir, "latest.png")
+        image.save(latest_path)
+        return path
+
+    def _save_text_image(self, image):
+        filename = datetime.utcnow().strftime("telegram_text_%Y%m%d_%H%M%S.png")
+        path = os.path.join(self.storage_dir, filename)
+        image.save(path)
+
+        latest_path = os.path.join(self.storage_dir, "latest_text.png")
         image.save(latest_path)
         return path
 
@@ -1049,25 +1058,6 @@ class TelegramBotListener:
                 status = "On" if request["rewrite"] else "Off"
                 self._refresh_text_message(request)
                 self._answer_callback(callback_query["id"], text=f"Rewrite: {status}")
-            elif action == "wbadge" and param:
-                # Single-select: Badge ON implies Overlay OFF
-                self.text_flow.set_wbadge(request, param == "on")
-                if request.get("wbadge"):
-                    self.text_flow.set_woverlay(request, False)
-                self._refresh_text_message(request)
-                self._answer_callback(callback_query["id"], text=f"Weather: {'Badge' if request.get('wbadge') else 'Off'}")
-            elif action == "wover" and param:
-                # Single-select: Overlay ON implies Badge OFF
-                self.text_flow.set_woverlay(request, param == "on")
-                if request.get("woverlay"):
-                    self.text_flow.set_wbadge(request, False)
-                self._refresh_text_message(request)
-                self._answer_callback(callback_query["id"], text=f"Weather: {'Overlay' if request.get('woverlay') else 'Off'}")
-            elif action == "woff":
-                self.text_flow.set_wbadge(request, False)
-                self.text_flow.set_woverlay(request, False)
-                self._refresh_text_message(request)
-                self._answer_callback(callback_query["id"], text="Weather: Off")
             elif action == "cycle_background":
                 # Backward compatibility
                 self.text_flow.cycle_background(request)
@@ -2279,7 +2269,32 @@ class TelegramBotListener:
                 self._refresh_text_message(request, status="Rendering…")
             except Exception:
                 logger.exception("Failed to compute preview text before rendering.")
-            result = self.text_flow.finalize(request)
+            target_size = None
+            try:
+                current_dt = (
+                    self.refresh_task._get_current_datetime()
+                    if hasattr(self.refresh_task, "_get_current_datetime")
+                    else datetime.utcnow()
+                )
+                playlist, cat_instance = self._find_daily_cat_plugin_instance(current_dt)
+                if playlist and cat_instance:
+                    settings = cat_instance.settings or {}
+                    lat = (settings.get("latitude") or "").strip()
+                    lon = (settings.get("longitude") or "").strip()
+                    if lat and lon:
+                        dimensions = self.device_config.get_resolution()
+                        if self.device_config.get_config("orientation") == "vertical":
+                            dimensions = dimensions[::-1]
+                        width, height = dimensions
+                        sidebar_width = int(width * 0.30)
+                        sidebar_width = max(120, min(width - 100, sidebar_width))
+                        image_width = width - sidebar_width
+                        target_size = (image_width, height)
+            except Exception:
+                logger.exception("Failed to determine /txt target size; falling back to full frame.")
+                target_size = None
+
+            result = self.text_flow.finalize(request, target_size=target_size)
         except Exception as exc:
             logger.exception("Telegram text generation failed: %s", exc)
             request["locked"] = False
@@ -2292,14 +2307,31 @@ class TelegramBotListener:
         except Exception:
             logger.exception("Failed to update Telegram message after text rendering.")
 
-        image_path = result["image_path"]
+        image = result["image"]
+        final_img = image
+        if target_size:
+            try:
+                final_img = self._compose_with_daily_sidebar(final_img)
+            except Exception:
+                logger.exception("Failed to compose /txt with Daily Theme sidebar; using left panel only.")
+                final_img = image
+
+        image_path = None
+        try:
+            image_path = self._save_text_image(final_img)
+        except Exception:
+            logger.exception("Failed to save Telegram text image.")
         caption = "✅ Text updated"
         try:
-            with Image.open(image_path) as img:
-                self._send_photo(request["chat_id"], img, caption=caption)
+            self._send_photo(request["chat_id"], final_img, caption=caption)
         except Exception:
             logger.exception("Failed to send Telegram text preview.")
             self._send_message(request["chat_id"], "Text displayed, but failed to send preview image.")
+
+        try:
+            self._display_image(final_img, refresh_type="Telegram Text", plugin_id="telegram_text")
+        except Exception:
+            logger.exception("Failed to display /txt image.")
 
         self.text_flow.cancel_request(request_id)
 
@@ -2438,8 +2470,8 @@ class TelegramBotListener:
             "",
             "Text composer (/txt):",
             "- /txt <message> — compose a note with style and background options.",
-            "- Backgrounds: None, Last Image, Live Weather, AI background, Solid Colour, Saved Image, Custom AI prompt.",
-            "- Weather controls: toggle Off/Badge/Overlay and open Weather options.",
+            "- Backgrounds: Plain, Illustration (Blur), Illustration, Auto-Generate, Solid Colour, Saved Image, Custom AI prompt.",
+            "- Notes are always shown in the left panel with the right-hand weather sidebar (when Daily Theme is configured).",
             "",
             "Saved images:",
             "- /save — save the last background or the last note+background composite.",
