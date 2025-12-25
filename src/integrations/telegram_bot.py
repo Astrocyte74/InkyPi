@@ -130,6 +130,7 @@ class TelegramBotListener:
         self.pending_cat_reroll = set()
         self.pending_card_updates = set()
         self.pending_card_bg_updates = set()
+        self._last_cleanup_ts = 0.0
         # Slideshow state
         self.slideshow_thread = None
         self.slideshow_stop = threading.Event()
@@ -141,6 +142,85 @@ class TelegramBotListener:
             "weather": "off",  # off|badge|overlay
             "was_refresh_running": False,
         }
+
+    def _retention_days(self) -> int:
+        raw = self.device_config.load_env_key("INKYPI_MOCK_RETENTION_DAYS")
+        try:
+            days = int(str(raw).strip())
+        except Exception:
+            days = 7
+        return max(0, min(3650, days))
+
+    def _maybe_cleanup_mock_outputs(self) -> None:
+        now_ts = time.time()
+        if self._last_cleanup_ts and (now_ts - self._last_cleanup_ts) < 12 * 60 * 60:
+            return
+        self._last_cleanup_ts = now_ts
+
+        keep_days = self._retention_days()
+        if keep_days <= 0:
+            return
+        cutoff = now_ts - (keep_days * 24 * 60 * 60)
+
+        removed = 0
+        freed = 0
+
+        def should_delete_telegram(name: str) -> bool:
+            if name in {"latest.png", "latest_text.png", "last_text_background.png"}:
+                return False
+            if name.startswith("telegram_") and name.endswith(".png"):
+                return True
+            if name.startswith("telegram_text_") and name.endswith(".png"):
+                return True
+            if name.startswith("telegram_text_bg_") and name.endswith(".png"):
+                return True
+            return False
+
+        def should_delete_cat_cache(name: str) -> bool:
+            if name.startswith("latest_bg_") and name.endswith(".png"):
+                return False
+            if name.startswith("bg_") and (name.endswith(".png") or name.endswith(".json")):
+                return True
+            return False
+
+        def cleanup_dir(path: str, predicate) -> None:
+            nonlocal removed, freed
+            try:
+                for entry in os.scandir(path):
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                    if not predicate(entry.name):
+                        continue
+                    try:
+                        stat = entry.stat()
+                    except Exception:
+                        continue
+                    if stat.st_mtime > cutoff:
+                        continue
+                    try:
+                        freed += int(stat.st_size or 0)
+                        os.remove(entry.path)
+                        removed += 1
+                    except Exception:
+                        logger.exception("Failed to remove old mock file: %s", entry.path)
+            except FileNotFoundError:
+                return
+            except Exception:
+                logger.exception("Failed to cleanup mock directory: %s", path)
+
+        cleanup_dir(self.storage_dir, should_delete_telegram)
+        cleanup_dir(
+            os.path.join(self.device_config.BASE_DIR, "..", "mock_display_output", "daily_cat_weather"),
+            should_delete_cat_cache,
+        )
+
+        if removed:
+            logger.info(
+                "Mock output cleanup: removed %s files older than %s days (freed ~%.1fMB)",
+                removed,
+                keep_days,
+                freed / 1024 / 1024,
+            )
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -158,6 +238,7 @@ class TelegramBotListener:
     def _run(self):
         while not self._stop_event.is_set():
             try:
+                self._maybe_cleanup_mock_outputs()
                 params = {
                     "timeout": self.poll_timeout,
                     "allowed_updates": ["message", "edited_message", "callback_query"],
@@ -294,6 +375,8 @@ class TelegramBotListener:
                 # Could be a name or a source keyword
                 if parts[1].lower() in {"bg", "background", "image"}:
                     source = "bg"
+                elif parts[1].lower() in {"current", "display"}:
+                    source = "current"
                 elif parts[1].lower() in {"text", "overlay"}:
                     source = "text"
                 else:
@@ -301,6 +384,8 @@ class TelegramBotListener:
             elif len(parts) >= 3:
                 if parts[1].lower() in {"bg", "background", "image"}:
                     source = "bg"
+                elif parts[1].lower() in {"current", "display"}:
+                    source = "current"
                 elif parts[1].lower() in {"text", "overlay"}:
                     source = "text"
                 name = parts[2]
@@ -491,6 +576,8 @@ class TelegramBotListener:
             latest = os.path.join(self.storage_dir, "latest_text.png")
         elif source == "txtbg":
             latest = os.path.join(self.storage_dir, "last_text_background.png")
+        elif source == "current":
+            latest = getattr(self.device_config, "current_image_file", None) or ""
         else:
             latest = os.path.join(self.storage_dir, "latest.png")
         if not os.path.exists(latest):
@@ -1151,7 +1238,7 @@ class TelegramBotListener:
             message_id = callback_query.get("message", {}).get("message_id")
             action = parts[1] if len(parts) > 1 else None
             arg = parts[2] if len(parts) > 2 else None
-            if action == "choose" and arg in {"bg", "text", "txtbg", "bgauto"}:
+            if action == "choose" and arg in {"bg", "text", "txtbg", "bgauto", "current"}:
                 # Resolve auto background to last /txt background if available
                 eff_source = arg
                 if arg == "bgauto":
@@ -1161,7 +1248,9 @@ class TelegramBotListener:
                 pretty = (
                     "Background (Auto)" if arg == "bgauto" else (
                         "Background" if eff_source == "bg" else (
-                            "Last Background (/txt)" if eff_source == "txtbg" else "Last Background and Text"
+                            "Last Background (/txt)" if eff_source == "txtbg" else (
+                                "Current Display" if eff_source == "current" else "Last Background and Text"
+                            )
                         )
                     )
                 )
@@ -1180,7 +1269,7 @@ class TelegramBotListener:
                 }
                 self._refresh_save_message(chat_id, message_id, text, markup)
                 self._answer_callback(callback_query["id"]) 
-            elif action == "quick" and arg in {"bg", "text", "txtbg"}:
+            elif action == "quick" and arg in {"bg", "text", "txtbg", "current"}:
                 # parts[3] suggestion
                 name = parts[3] if len(parts) > 3 else self._suggest_save_name(arg)
                 try:
@@ -1191,7 +1280,7 @@ class TelegramBotListener:
                 except Exception as exc:
                     logger.exception("Quick save failed: %s", exc)
                     self._answer_callback(callback_query["id"], text="Save failed.")
-            elif action == "prompt" and arg in {"bg", "text", "txtbg"}:
+            elif action == "prompt" and arg in {"bg", "text", "txtbg", "current"}:
                 # Ask name via ForceReply
                 try:
                     self.pending_save[chat_id] = {"source": arg}
@@ -1211,6 +1300,7 @@ class TelegramBotListener:
                     "inline_keyboard": [
                         [
                             {"text": "Save Background (Auto)", "callback_data": "save|choose|bgauto"},
+                            {"text": "Save Current Display", "callback_data": "save|choose|current"},
                             {"text": "Save Last Background and Text", "callback_data": "save|choose|text"},
                         ],
                         [
@@ -3217,6 +3307,7 @@ class TelegramBotListener:
             "inline_keyboard": [
                 [
                     {"text": "Save Background (Auto)", "callback_data": "save|choose|bgauto"},
+                    {"text": "Save Current Display", "callback_data": "save|choose|current"},
                     {"text": "Save Last Background and Text", "callback_data": "save|choose|text"},
                 ],
                 [
@@ -3309,6 +3400,8 @@ class TelegramBotListener:
             prefix = "composite"
         elif source == "txtbg":
             prefix = "txtbg"
+        elif source == "current":
+            prefix = "display"
         else:
             prefix = "bg"
         return f"{prefix}_{ts}"
