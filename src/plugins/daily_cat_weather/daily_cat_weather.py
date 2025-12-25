@@ -234,50 +234,72 @@ class DailyCatWeather(BasePlugin):
                     holiday_hint=holiday_hint,
                     theme_spec=theme_spec,
                 )
-            background = self._generate_gemini_background(
-                api_key=gemini_key,
-                prompt=prompt,
-                model=model,
-                image_size=image_size,
-                aspect_ratio="9:16" if device_config.get_config("orientation") == "vertical" else "16:9",
-            )
-            background = self._trim_uniform_border(background)
-            background = self._trim_internal_vertical_divider(background)
-            background = self._cover_crop(background, image_size_px)
-            background.save(bg_path)
-            self._write_json(
-                meta_path,
-                {
-                    "created_at": now.isoformat(),
-                    "day_key": day_key,
-                    "fingerprint": fingerprint,
-                    "model": model,
-                    "image_size": image_size,
-                    "prompt": prompt,
-                    "weather": (
-                        {
-                            "description": weather.description,
-                            "temp": weather.current_temp,
-                            "feels_like": weather.feels_like,
-                        }
-                        if weather
-                        else {}
-                    ),
-                    "reroll_nonce": reroll_nonce,
-                    "prompt_version": PROMPT_VERSION,
-                    "custom_prompt": active_custom_prompt,
-                    "custom_prompt_raw": custom_prompt_raw,
-                    "custom_prompt_day_key": custom_prompt_day_key,
-                    "layout": "right_sidebar",
-                    "layout_version": LAYOUT_VERSION,
-                    "sidebar_ratio": SIDEBAR_WIDTH_RATIO,
-                    "sidebar_width": sidebar_width,
-                },
-            )
+            generated_new = True
             try:
-                background.save(latest_link)
-            except Exception:
-                logger.exception("Failed to update latest background pointer.")
+                background = self._generate_gemini_background(
+                    api_key=gemini_key,
+                    prompt=prompt,
+                    model=model,
+                    image_size=image_size,
+                    aspect_ratio="9:16" if device_config.get_config("orientation") == "vertical" else "16:9",
+                )
+                background = self._trim_uniform_border(background)
+                background = self._trim_internal_vertical_divider(background)
+                background = self._cover_crop(background, image_size_px)
+            except Exception as exc:
+                generated_new = False
+                background = None
+                logger.exception("Failed to generate new Gemini background; falling back to cached image: %s", exc)
+                for fallback_path in (bg_path, latest_link):
+                    if not os.path.exists(fallback_path):
+                        continue
+                    try:
+                        with Image.open(fallback_path) as img:
+                            background = img.convert("RGB")
+                        break
+                    except Exception:
+                        logger.exception("Failed to load fallback background: %s", fallback_path)
+                        background = None
+                if background is None:
+                    raise
+                if background.size != image_size_px:
+                    background = self._cover_crop(background, image_size_px)
+
+            if generated_new:
+                background.save(bg_path)
+                self._write_json(
+                    meta_path,
+                    {
+                        "created_at": now.isoformat(),
+                        "day_key": day_key,
+                        "fingerprint": fingerprint,
+                        "model": model,
+                        "image_size": image_size,
+                        "prompt": prompt,
+                        "weather": (
+                            {
+                                "description": weather.description,
+                                "temp": weather.current_temp,
+                                "feels_like": weather.feels_like,
+                            }
+                            if weather
+                            else {}
+                        ),
+                        "reroll_nonce": reroll_nonce,
+                        "prompt_version": PROMPT_VERSION,
+                        "custom_prompt": active_custom_prompt,
+                        "custom_prompt_raw": custom_prompt_raw,
+                        "custom_prompt_day_key": custom_prompt_day_key,
+                        "layout": "right_sidebar",
+                        "layout_version": LAYOUT_VERSION,
+                        "sidebar_ratio": SIDEBAR_WIDTH_RATIO,
+                        "sidebar_width": sidebar_width,
+                    },
+                )
+                try:
+                    background.save(latest_link)
+                except Exception:
+                    logger.exception("Failed to update latest background pointer.")
 
         canvas = Image.new("RGB", (width, height), (255, 255, 255))
         canvas.paste(background, (0, 0))
@@ -1215,16 +1237,53 @@ class DailyCatWeather(BasePlugin):
             )
 
         def _extract_image_bytes_from_generate_content(response):
+            def _get_attr(obj, key, default=None):
+                try:
+                    if isinstance(obj, dict):
+                        return obj.get(key, default)
+                    return getattr(obj, key, default)
+                except Exception:
+                    return default
+
+            def _iter_candidates(resp):
+                candidates = _get_attr(resp, "candidates")
+                if isinstance(candidates, list):
+                    return candidates
+                return []
+
+            def _iter_parts(candidate):
+                content = _get_attr(candidate, "content")
+                parts = None
+                if content is not None:
+                    parts = _get_attr(content, "parts")
+                if not isinstance(parts, list):
+                    parts = _get_attr(candidate, "parts")
+                return parts if isinstance(parts, list) else []
+
             try:
-                candidate = response.candidates[0]
-                return next(
-                    (
-                        part.inline_data.data
-                        for part in candidate.content.parts
-                        if getattr(part, "inline_data", None)
-                    ),
-                    None,
-                )
+                for cand in _iter_candidates(response):
+                    for part in _iter_parts(cand):
+                        inline = _get_attr(part, "inline_data")
+                        if inline is None:
+                            continue
+                        data = _get_attr(inline, "data")
+                        if data:
+                            return data
+
+                # No image bytes found; attempt to log a compact debug summary.
+                try:
+                    candidates = _iter_candidates(response)
+                    finish = _get_attr(candidates[0], "finish_reason") if candidates else None
+                    prompt_fb = _get_attr(response, "prompt_feedback")
+                    logger.error(
+                        "Gemini returned no IMAGE parts | model=%s | finish_reason=%s | prompt_feedback=%s",
+                        model,
+                        finish,
+                        prompt_fb,
+                    )
+                except Exception:
+                    logger.exception("Failed to summarize Gemini response after missing image data.")
+                return None
             except Exception:
                 logger.exception("Unexpected Gemini response format.")
                 return None
