@@ -11,13 +11,18 @@ import shutil
 
 import requests
 from requests.exceptions import HTTPError
-from PIL import Image
+from PIL import Image, ImageOps
+import pytz
 
 from model import RefreshInfo
 from refresh_task import PlaylistRefresh
 from utils.image_utils import compute_image_hash
 from plugins.plugin_registry import get_plugin_instance
 from integrations.telegram_text_flow import TelegramTextFlow
+from utils.openweather import fetch_weather_snapshot
+from utils.weather_sidebar import render_weather_sidebar_panel
+from utils.family_events import banner_from_env
+from utils.family_banner import draw_family_banner
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +147,94 @@ class TelegramBotListener:
             "weather": "off",  # off|badge|overlay
             "was_refresh_running": False,
         }
+
+    @staticmethod
+    def _cover_crop(img, size):
+        return ImageOps.fit(img, size, method=Image.LANCZOS, centering=(0.5, 0.5))
+
+    def _compose_with_daily_sidebar(self, image):
+        """Wrap a full image into the standard Daily Theme layout (left art + right weather sidebar).
+
+        If the Daily Theme illustration plugin isn't configured, returns the original image.
+        """
+        current_dt = (
+            self.refresh_task._get_current_datetime()
+            if hasattr(self.refresh_task, "_get_current_datetime")
+            else datetime.utcnow()
+        )
+        playlist, cat_instance = self._find_daily_cat_plugin_instance(current_dt)
+        if not playlist or not cat_instance:
+            return image
+
+        settings = cat_instance.settings or {}
+        lat = (settings.get("latitude") or "").strip()
+        lon = (settings.get("longitude") or "").strip()
+        if not lat or not lon:
+            return image
+
+        units = (settings.get("units") or "metric").strip().lower()
+        forecast_days = int(settings.get("forecastDays") or 3)
+        forecast_days = max(1, min(5, forecast_days))
+        location_label = (settings.get("locationLabel") or "").strip()
+
+        tz_str = self.device_config.get_config("timezone", default="UTC")
+        tz = pytz.timezone(tz_str)
+        now = datetime.now(tz)
+
+        dimensions = self.device_config.get_resolution()
+        if self.device_config.get_config("orientation") == "vertical":
+            dimensions = dimensions[::-1]
+
+        width, height = dimensions
+        try:
+            from plugins.daily_cat_weather.daily_cat_weather import DailyCatWeather  # local import
+        except Exception:
+            return image
+
+        sidebar_ratio = 0.30
+        font_fn = DailyCatWeather._font  # pylint: disable=protected-access
+        icon_renderer = DailyCatWeather._simple_weather_icon  # pylint: disable=protected-access
+
+        sidebar_width = int(width * sidebar_ratio)
+        sidebar_width = max(120, min(width - 100, sidebar_width))
+        image_width = width - sidebar_width
+
+        owm_key = self.device_config.load_env_key("OPEN_WEATHER_MAP_SECRET")
+        weather = None
+        if owm_key:
+            try:
+                weather = fetch_weather_snapshot(api_key=owm_key, units=units, lat=lat, lon=lon, now=now)
+            except Exception:
+                logger.exception("Failed to fetch weather for sidebar; continuing without sidebar data.")
+
+        left = self._cover_crop(image.convert("RGB"), (image_width, height))
+        try:
+            banner = banner_from_env(self.device_config, now=now)
+            if banner:
+                draw_family_banner(
+                    left,
+                    headline=banner.get("headline") or "",
+                    detail=banner.get("detail") or "",
+                    font_fn=font_fn,
+                    region=(0, 0, image_width, height),
+                )
+        except Exception:
+            logger.exception("Failed to render family banner; continuing.")
+
+        panel = render_weather_sidebar_panel(
+            weather,
+            tz,
+            forecast_days,
+            (sidebar_width, height),
+            location_label,
+            font=font_fn,
+            icon_renderer=icon_renderer,
+        )
+
+        canvas = Image.new("RGB", (width, height), (255, 255, 255))
+        canvas.paste(left, (0, 0))
+        canvas.paste(panel, (image_width, 0))
+        return canvas
 
     def _retention_days(self) -> int:
         raw = self.device_config.load_env_key("INKYPI_MOCK_RETENTION_DAYS")
@@ -449,7 +542,10 @@ class TelegramBotListener:
         elif text.lower().strip() == "/stop":
             self._stop_slideshow(chat_id)
         else:
-            self._init_ai_prompt(chat_id, text)
+            self._send_message(
+                chat_id,
+                "Try `/ai <prompt>` to generate an image, `/txt <message>` for a note, or `/help` for options.",
+            )
 
     def _handle_photo(self, photos, chat_id):
         if not photos:
@@ -887,25 +983,6 @@ class TelegramBotListener:
                 self._refresh_ai_message(request)
                 palette_label = self._get_palette_label(request["palette"])
                 self._answer_callback(callback_query["id"], text=f"Palette: {palette_label}.")
-            elif action == "wbadge" and param:
-                # Single-select: Badge ON implies Overlay OFF
-                request["wbadge"] = (param == "on")
-                if request["wbadge"]:
-                    request["woverlay"] = False
-                self._refresh_ai_message(request)
-                self._answer_callback(callback_query["id"], text=f"Weather: {'Badge' if request.get('wbadge') else 'Off'}")
-            elif action == "wover" and param:
-                # Single-select: Overlay ON implies Badge OFF
-                request["woverlay"] = (param == "on")
-                if request["woverlay"]:
-                    request["wbadge"] = False
-                self._refresh_ai_message(request)
-                self._answer_callback(callback_query["id"], text=f"Weather: {'Overlay' if request.get('woverlay') else 'Off'}")
-            elif action == "woff":
-                request["wbadge"] = False
-                request["woverlay"] = False
-                self._refresh_ai_message(request)
-                self._answer_callback(callback_query["id"], text="Weather: Off")
             elif action == "generate":
                 self._answer_callback(callback_query["id"], text="Generating image…")
                 request["locked"] = True
@@ -918,10 +995,6 @@ class TelegramBotListener:
             elif action == "cancel":
                 self._answer_callback(callback_query["id"], text="Cancelled.")
                 self._cancel_ai_request(request_id, status_text="Cancelled.")
-            elif action == "open_wx":
-                chat_id = callback_query["message"]["chat"]["id"]
-                self._send_weather_menu(chat_id)
-                self._answer_callback(callback_query["id"], text="Weather options opened.")
             else:
                 self._answer_callback(callback_query["id"])
         elif flow_type == "txt":
@@ -1644,8 +1717,6 @@ class TelegramBotListener:
             "message_id": None,
             "locked": False,
             "source_text_request_id": source_text_request_id,
-            "wbadge": False,
-            "woverlay": False,
         }
         self._set_style(request, "none")
         self.pending_requests[request_id] = request
@@ -1773,23 +1844,6 @@ class TelegramBotListener:
                     "text": f"🎨 Palette: {palette_label}",
                     "callback_data": f"ai|{request_id}|cycle_palette",
                 }
-            ]
-        )
-        # Weather selection row (Off/Badge/Overlay/Options)
-        wbadge_on = bool(request.get("wbadge"))
-        woverlay_on = bool(request.get("woverlay"))
-        is_off = not wbadge_on and not woverlay_on
-        keyboard.append(
-            [
-                {"text": f"Weather:", "callback_data": f"ai|{request_id}|noop"},
-            ]
-        )
-        keyboard.append(
-            [
-                {"text": f"Off {'✅' if is_off else ''}".strip(), "callback_data": f"ai|{request_id}|woff"},
-                {"text": f"Badge {'✅' if wbadge_on else ''}".strip(), "callback_data": f"ai|{request_id}|wbadge|on"},
-                {"text": f"Overlay {'✅' if woverlay_on else ''}".strip(), "callback_data": f"ai|{request_id}|wover|on"},
-                {"text": "Options", "callback_data": "wx|open"},
             ]
         )
 
@@ -2077,19 +2131,15 @@ class TelegramBotListener:
 
         image = plugin.generate_image(settings, self.device_config)
 
-        # Apply optional Weather badge and overlay (per-request and global)
         final_img = image
-        try:
-            if request.get("wbadge"):
-                final_img = self.text_flow.overlay_weather_badge(final_img)
-            # Full overlay: per-request or global option
-            if request.get("woverlay"):
-                final_img = self.text_flow.overlay_weather_caption(final_img)
-            opts = self._get_weather_options()
-            if (opts.get("weather", {}).get("overlay", {}).get("enabled")):
-                final_img = self.text_flow.overlay_weather_caption(final_img)
-        except Exception:
-            logger.exception("Failed to apply weather overlays for AI image.")
+        # For standalone /ai images, wrap into the standard layout (left art + right weather sidebar).
+        # For /txt backgrounds, keep the generated background raw (no sidebar).
+        if not request.get("source_text_request_id"):
+            try:
+                final_img = self._compose_with_daily_sidebar(final_img)
+            except Exception:
+                logger.exception("Failed to compose AI image with Daily Theme sidebar; using raw image.")
+                final_img = image
 
         saved_path = self._save_image(final_img)
 
@@ -2150,7 +2200,7 @@ class TelegramBotListener:
             "- /ai <prompt> — opens the image generator with buttons for Model/Quality/Style/Palette.",
             f"- Models: {model_labels}. (Gemini requires `GEMINI_API_KEY`)",
             "- Default model: set `TELEGRAM_AI_DEFAULT_MODEL` in your `.env` (list supported; first entry wins).",
-            "- Weather controls: toggle Off/Badge/Overlay and open Weather options.",
+            "- If Daily Theme is configured, the result is shown with the right-hand weather sidebar.",
             "",
             "Text composer (/txt):",
             "- /txt <message> — compose a note with style and background options.",
