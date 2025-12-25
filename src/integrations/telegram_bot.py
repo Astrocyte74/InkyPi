@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import threading
 import time
@@ -139,6 +140,7 @@ class TelegramBotListener:
         self.load_wx = {}
         self.wx_menu_ids = {}
         self.ss_menu_ids = {}
+        self.pending_load_illustration = set()
         self.pending_cat_reroll = set()
         self.pending_card_updates = set()
         self.pending_card_bg_updates = set()
@@ -1447,6 +1449,26 @@ class TelegramBotListener:
                 if is_bg:
                     row.append({"text": "📝 Use with Text", "callback_data": f"load|usetxt|{name}"})
                 kb.append(row)
+
+                # Optional: promote saved image into today's Daily Theme illustration cache.
+                try:
+                    current_dt = (
+                        self.refresh_task._get_current_datetime()
+                        if hasattr(self.refresh_task, "_get_current_datetime")
+                        else datetime.utcnow()
+                    )
+                    _, cat_instance = self._find_daily_cat_plugin_instance(current_dt)
+                    if cat_instance and getattr(self.refresh_task, "running", False):
+                        kb.append(
+                            [
+                                {
+                                    "text": "🎨 Use as Today’s Illustration",
+                                    "callback_data": f"load|use_illustration|{name}",
+                                }
+                            ]
+                        )
+                except Exception:
+                    pass
                 # Back/cancel
                 kb.append([
                     {"text": "⬅️ Back", "callback_data": "load|back"},
@@ -1686,6 +1708,31 @@ class TelegramBotListener:
                 except Exception:
                     logger.exception("Failed to prompt for /txt message after load.")
                 self._answer_callback(callback_query["id"], text="Awaiting message…")
+            elif action == "use_illustration" and arg:
+                name = arg
+                if chat_id in self.pending_load_illustration:
+                    self._answer_callback(callback_query["id"], text="Already updating…")
+                    return
+                self.pending_load_illustration.add(chat_id)
+                try:
+                    self._answer_callback(callback_query["id"], text="Setting illustration…")
+                except Exception:
+                    pass
+                try:
+                    self._refresh_load_message(
+                        chat_id,
+                        message_id,
+                        f"Setting today’s illustration from '{name}'…",
+                        {"inline_keyboard": []},
+                    )
+                except Exception:
+                    pass
+                threading.Thread(
+                    target=self._use_saved_as_daily_illustration_worker,
+                    args=(chat_id, message_id, name),
+                    name=f"TelegramUseIllustration-{chat_id}",
+                    daemon=True,
+                ).start()
             # removed bgonly action (Display Now is the default no-text path)
             elif action == "back":
                 self._refresh_load_message(chat_id, message_id, "Load Saved Image\n\nPick an image to preview, display, or use as background.", {
@@ -1700,6 +1747,173 @@ class TelegramBotListener:
                 self._answer_callback(callback_query["id"]) 
         else:
             self._answer_callback(callback_query["id"])
+
+    def _use_saved_as_daily_illustration_worker(self, chat_id, message_id, name):
+        try:
+            saved_path = os.path.join(self.text_flow.storage_dir, "saved", f"{name}.png")
+            if not os.path.exists(saved_path):
+                self._send_message(chat_id, f"Saved image '{name}' not found.")
+                return
+
+            current_dt = (
+                self.refresh_task._get_current_datetime()
+                if hasattr(self.refresh_task, "_get_current_datetime")
+                else datetime.utcnow()
+            )
+            playlist, cat_instance = self._find_daily_cat_plugin_instance(current_dt)
+            if not playlist or not cat_instance:
+                self._send_message(chat_id, "Daily Theme illustration isn't enabled (add `daily_cat_weather` to a playlist).")
+                return
+            if not getattr(self.refresh_task, "running", False):
+                self._send_message(chat_id, "Refresh task is not running; restart `inkypi.service` and try again.")
+                return
+
+            try:
+                from plugins.daily_cat_weather import daily_cat_weather as dcw  # local import
+            except Exception as exc:
+                self._send_message(chat_id, f"Daily Cat Weather plugin import failed: {exc}")
+                return
+
+            settings = cat_instance.settings or {}
+            lat = (settings.get("latitude") or "").strip()
+            lon = (settings.get("longitude") or "").strip()
+            if not lat or not lon:
+                self._send_message(chat_id, "Daily Theme illustration needs latitude/longitude configured first.")
+                return
+
+            cache_id = dcw.DailyCatWeather._sanitize_cache_id(settings.get("cacheId") or "default")  # pylint: disable=protected-access
+            daily_refresh_time = dcw.DailyCatWeather._parse_hhmm(settings.get("dailyRefreshTime") or "04:00")  # pylint: disable=protected-access
+
+            tz_str = self.device_config.get_config("timezone", default="UTC")
+            tz = pytz.timezone(tz_str)
+            now = datetime.now(tz)
+            day_key = dcw.DailyCatWeather._day_key(now, daily_refresh_time)  # pylint: disable=protected-access
+
+            dimensions = self.device_config.get_resolution()
+            if self.device_config.get_config("orientation") == "vertical":
+                dimensions = dimensions[::-1]
+            width, height = dimensions
+            sidebar_width = int(width * dcw.SIDEBAR_WIDTH_RATIO)
+            sidebar_width = max(120, min(width - 100, sidebar_width))
+            image_width = width - sidebar_width
+            image_size_px = (image_width, height)
+
+            with Image.open(saved_path) as img:
+                base = img.convert("RGB")
+            # If the saved image includes a sidebar, crop it out first.
+            try:
+                base = dcw.DailyCatWeather._trim_internal_vertical_divider(base)  # pylint: disable=protected-access
+            except Exception:
+                pass
+            try:
+                base = dcw.DailyCatWeather._trim_uniform_border(base)  # pylint: disable=protected-access
+            except Exception:
+                pass
+            background = dcw.DailyCatWeather._cover_crop(base, image_size_px)  # pylint: disable=protected-access
+
+            # Compute fingerprint so the plugin will accept this cached background for today.
+            model = (settings.get("imageModel") or "gemini-2.5-flash-image").strip()
+            quality_key = (settings.get("quality") or "2k").strip().lower()
+            image_size = dcw.GEMINI_IMAGE_SIZES.get(quality_key, "2K")
+            reroll_nonce = int(settings.get("rerollNonce") or 0)
+
+            holiday_theming = str(settings.get("holidayTheming") or "off").strip().lower()
+            holiday_region = str(settings.get("holidayRegion") or "ca_ab").strip().lower()
+            holiday_window_days = int(settings.get("holidayWindowDays") or 14)
+            holiday_window_days = max(0, min(60, holiday_window_days))
+
+            image_theme = dcw.DailyCatWeather._normalize_theme_id(settings.get("imageTheme") or dcw.DEFAULT_THEME_ID) or dcw.DEFAULT_THEME_ID  # pylint: disable=protected-access
+            theme_spec = dcw.DailyCatWeather._theme_spec(image_theme)  # pylint: disable=protected-access
+
+            custom_prompt_day_key = (settings.get("customPromptDayKey") or "").strip()
+            custom_prompt_raw = (settings.get("customPrompt") or "").strip()
+            custom_prompt_enhanced = (settings.get("customPromptEnhanced") or "").strip()
+            active_custom_prompt = (custom_prompt_enhanced or custom_prompt_raw) if custom_prompt_day_key == day_key else ""
+
+            fingerprint_values = {
+                "lat": lat,
+                "lon": lon,
+                "units": (settings.get("units") or "metric").strip().lower(),
+                "model": model,
+                "image_size": image_size,
+                "daily_refresh_time": daily_refresh_time.strftime("%H:%M"),
+                "reroll_nonce": reroll_nonce,
+                "prompt_version": dcw.PROMPT_VERSION,
+                "layout": "right_sidebar",
+                "layout_version": dcw.LAYOUT_VERSION,
+                "sidebar_ratio": dcw.SIDEBAR_WIDTH_RATIO,
+                "holiday_theming": holiday_theming,
+                "holiday_region": holiday_region,
+                "holiday_window_days": holiday_window_days,
+                "image_theme": (theme_spec or {}).get("id") or image_theme,
+            }
+            if active_custom_prompt:
+                fingerprint_values.update(
+                    {
+                        "custom_prompt_day_key": custom_prompt_day_key,
+                        "custom_prompt_hash": hashlib.sha256(active_custom_prompt.encode("utf-8")).hexdigest(),
+                    }
+                )
+            fingerprint = dcw.DailyCatWeather._settings_fingerprint(fingerprint_values)  # pylint: disable=protected-access
+
+            cache_dir = dcw.DailyCatWeather._cache_dir(self.device_config)  # pylint: disable=protected-access
+            os.makedirs(cache_dir, exist_ok=True)
+            bg_path = os.path.join(cache_dir, f"bg_{cache_id}_{day_key}.png")
+            meta_path = os.path.join(cache_dir, f"bg_{cache_id}_{day_key}.json")
+            latest_link = os.path.join(cache_dir, f"latest_bg_{cache_id}.png")
+
+            background.save(bg_path)
+            try:
+                background.save(latest_link)
+            except Exception:
+                logger.exception("Failed to update latest background pointer (promote).")
+            try:
+                with open(meta_path, "w", encoding="utf-8") as handle:
+                    json.dump(
+                        {
+                            "created_at": now.isoformat(),
+                            "day_key": day_key,
+                            "fingerprint": fingerprint,
+                            "model": model,
+                            "image_size": image_size,
+                            "prompt": f"PROMOTED_FROM_SAVED:{name}",
+                            "reroll_nonce": reroll_nonce,
+                            "prompt_version": dcw.PROMPT_VERSION,
+                            "custom_prompt": active_custom_prompt,
+                            "custom_prompt_raw": custom_prompt_raw,
+                            "custom_prompt_day_key": custom_prompt_day_key,
+                            "layout": "right_sidebar",
+                            "layout_version": dcw.LAYOUT_VERSION,
+                            "sidebar_ratio": dcw.SIDEBAR_WIDTH_RATIO,
+                            "sidebar_width": sidebar_width,
+                        },
+                        handle,
+                        indent=2,
+                        sort_keys=True,
+                    )
+            except Exception:
+                logger.exception("Failed to write promoted Daily Theme cache metadata.")
+
+            self.refresh_task.manual_update(PlaylistRefresh(playlist, cat_instance, force=True))
+            plugin_image_path = os.path.join(self.device_config.plugin_image_dir, cat_instance.get_image_path())
+            self._send_photo_path(chat_id, plugin_image_path, caption=f"🎨 Set today’s illustration from saved image: {name}")
+
+            try:
+                self._refresh_load_message(chat_id, message_id, f"Set today’s illustration from '{name}' ✅", {"inline_keyboard": []})
+            except Exception:
+                pass
+        except Exception as exc:
+            logger.exception("Use as Daily Theme illustration failed: %s", exc)
+            try:
+                self._refresh_load_message(chat_id, message_id, f"Failed to set illustration: {exc}", {"inline_keyboard": []})
+            except Exception:
+                pass
+            self._send_message(chat_id, f"Failed to set today’s illustration: {exc}")
+        finally:
+            try:
+                self.pending_load_illustration.discard(chat_id)
+            except Exception:
+                pass
 
     def _init_ai_prompt(self, chat_id, prompt, source_text_request_id=None):
         prompt = prompt.strip()
