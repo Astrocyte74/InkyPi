@@ -518,6 +518,18 @@ class TelegramBotListener:
         elif text.lower().startswith("/weather") or text.lower().startswith("/wx"):
             webui = self._webui_url()
             self._send_message(chat_id, f"Weather is configured in the Web UI.\n\nWeb UI: {webui}")
+        elif text.lower().startswith("/banner"):
+            parts = text.split(maxsplit=1)
+            arg = parts[1].strip() if len(parts) > 1 else ""
+            if not arg:
+                self._send_message(chat_id, "Usage: /banner <text> (or `/banner clear`).")
+                return
+            if arg.lower() == "clear":
+                self._clear_banner_override()
+                self._send_message(chat_id, "Banner cleared (family banner will be used if applicable).")
+                return
+            self._set_banner_override_from_text(arg)
+            self._send_message(chat_id, "Banner set for today. It will appear on the next refresh.")
         elif re.match(r"^/t(?:\s|$)", text.strip(), flags=re.IGNORECASE):
             match = re.match(r"^/t(?:\s+(.*))?$", text.strip(), flags=re.IGNORECASE)
             arg = (match.group(1) or "").strip() if match else ""
@@ -1189,6 +1201,23 @@ class TelegramBotListener:
                     logger.exception("Failed to send ForceReply prompt request.")
                 # Do not edit original message; avoid visual shrink
                 self._answer_callback(callback_query["id"], text="Send background prompt…")
+            elif action == "banner" and param:
+                if param == "set":
+                    text_value = request.get("final_text_preview")
+                    if not text_value:
+                        try:
+                            text_value = self.text_flow.compute_final_text(request)
+                        except Exception:
+                            text_value = request.get("text") or ""
+                    try:
+                        self._set_banner_override_from_text(text_value)
+                        self._refresh_text_message(request, status="Banner set for today (shows on next refresh).")
+                        self._answer_callback(callback_query["id"], text="Banner set.")
+                    except Exception as exc:
+                        logger.exception("Failed to set banner override: %s", exc)
+                        self._answer_callback(callback_query["id"], text="Banner failed.")
+                else:
+                    self._answer_callback(callback_query["id"])
             elif action == "confirm":
                 if not request.get("bg_selected"):
                     self._refresh_text_message(request, status="Choose a background first.")
@@ -2082,6 +2111,42 @@ class TelegramBotListener:
         cfg["telegram_options"] = opts
         self.device_config.update_config(cfg)
 
+    def _set_banner_override(self, *, headline: str, detail: str = "") -> None:
+        tz_str = self.device_config.get_config("timezone", default="UTC")
+        try:
+            tz = pytz.timezone(tz_str)
+        except Exception:
+            tz = pytz.UTC
+        day = datetime.now(tz).date().isoformat()
+
+        cfg = self.device_config.get_config()
+        cfg["banner_override"] = {
+            "day": day,
+            "headline": (headline or "").strip(),
+            "detail": (detail or "").strip(),
+        }
+        self.device_config.update_config(cfg)
+
+    def _clear_banner_override(self) -> None:
+        cfg = self.device_config.get_config()
+        if "banner_override" in cfg:
+            cfg.pop("banner_override", None)
+            self.device_config.update_config(cfg)
+
+    def _set_banner_override_from_text(self, text: str) -> None:
+        raw = (text or "").strip()
+        if not raw:
+            raise ValueError("Banner text is empty.")
+        parts = [p.strip() for p in raw.splitlines() if p.strip()]
+        headline = parts[0] if parts else raw
+        detail = ""
+        if len(parts) >= 2:
+            detail = " ".join(parts[1:]).strip()
+        # Hard limits to avoid extreme overflow.
+        headline = headline[:120].rstrip()
+        detail = detail[:180].rstrip()
+        self._set_banner_override(headline=headline, detail=detail)
+
     def _send_weather_menu(self, chat_id, message_id=None):
         webui = self._webui_url()
         lines = [
@@ -2442,6 +2507,7 @@ class TelegramBotListener:
             "- /txt <message> — compose a note with style and background options.",
             "- Backgrounds: Plain, Illustration (Blur), Illustration, Auto-Generate, Solid Colour, Saved Image, Custom AI prompt.",
             "- Notes are always shown in the left panel with the right-hand weather sidebar (when Daily Theme is configured).",
+            "- Tip: tap “Set as Today’s Banner” to override the top banner for today.",
             "",
             "Saved images:",
             "- /save — save the last background or the last note+background composite.",

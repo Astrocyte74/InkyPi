@@ -339,6 +339,7 @@ class TelegramTextFlow:
                     ready = True
                 if ready:
                     keyboard.append([
+                        {"text": "📣 Set as Today’s Banner", "callback_data": f"txt|{request_id}|banner|set"},
                         {"text": "🪄 Generate", "callback_data": f"txt|{request_id}|confirm"},
                         {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
                     ])

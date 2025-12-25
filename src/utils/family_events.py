@@ -256,6 +256,19 @@ def pick_family_banner(
 
 
 def banner_from_env(device_config, *, now: datetime) -> dict[str, str] | None:
+    # Telegram/WebUI banner override: when set, it takes precedence for the current local day.
+    try:
+        override = device_config.get_config("banner_override", default=None)
+    except Exception:
+        override = None
+    if isinstance(override, dict):
+        day = str(override.get("day") or "").strip()
+        if day and day == now.date().isoformat():
+            headline = str(override.get("headline") or "").strip()
+            detail = str(override.get("detail") or "").strip()
+            if headline:
+                return {"headline": headline, "detail": detail}
+
     path = device_config.load_env_key("INKYPI_FAMILY_DATES_PATH") or DEFAULT_FAMILY_DATES_PATH
     config = load_family_config(path)
 
