@@ -225,7 +225,10 @@ def pick_family_banner(
             emoji = "🐣"
 
         if delta == 0:
-            headline = f"{emoji} {subject} today!"
+            if "christmas" in token or "xmas" in token:
+                headline = f"{emoji} Merry Christmas!"
+            else:
+                headline = f"{emoji} Happy {subject}!"
         elif delta == 1:
             headline = f"{emoji} {subject} is tomorrow"
         else:
