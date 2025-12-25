@@ -156,6 +156,7 @@
         const $deleteSavedLocation = document.querySelector('#deleteSavedLocation');
 
         const STORAGE_KEY = 'inkypi.daily_cat_weather.saved_locations';
+        const LAST_LOCATION_KEY = 'inkypi.daily_cat_weather.last_location';
 
         let map, marker;
 
@@ -206,6 +207,33 @@
             }
         }
 
+        function loadLastLocation() {
+            try {
+                const raw = localStorage.getItem(LAST_LOCATION_KEY);
+                const parsed = raw ? JSON.parse(raw) : null;
+                const label = (parsed && parsed.label) ? String(parsed.label).trim() : '';
+                const lat = parseFloatOrNull(parsed && parsed.lat);
+                const lon = parseFloatOrNull(parsed && parsed.lon);
+                if (!label || lat === null || lon === null) return null;
+                return { label, lat, lon };
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function saveLastLocation(loc) {
+            if (!loc) return;
+            const label = (loc.label || '').toString().trim();
+            const lat = parseFloatOrNull(loc.lat);
+            const lon = parseFloatOrNull(loc.lon);
+            if (!label || lat === null || lon === null) return;
+            try {
+                localStorage.setItem(LAST_LOCATION_KEY, JSON.stringify({ label, lat, lon }));
+            } catch (e) {
+                // ignore
+            }
+        }
+
         function renderSavedLocations() {
             const locations = normalizeLocations(loadSavedLocations());
             $savedLocations.innerHTML = '';
@@ -229,6 +257,23 @@
             $longitude.value = loc.lon.toFixed(6);
             if ($locationLabel && $locationLabel.value.trim() === '') {
                 $locationLabel.value = loc.label;
+            }
+            saveLastLocation({ label: loc.label, lat: loc.lat, lon: loc.lon });
+        }
+
+        function ensureDefaultLocation() {
+            const coords = currentCoords();
+            if (coords.lat !== null && coords.lon !== null) return;
+
+            const last = loadLastLocation();
+            if (last) {
+                applyLocation(last);
+                return;
+            }
+
+            const locations = normalizeLocations(loadSavedLocations());
+            if (locations.length) {
+                applyLocation(locations[0]);
             }
         }
 
@@ -264,6 +309,8 @@
             const position = marker.getLatLng().wrap();
             $latitude.value = position.lat.toFixed(6);
             $longitude.value = position.lng.toFixed(6);
+            const label = ($locationLabel?.value || '').trim() || 'Saved location';
+            saveLastLocation({ label, lat: position.lat, lon: position.lng });
             closeModal('mapModal');
         });
 
@@ -283,6 +330,7 @@
             saveSavedLocations(normalizeLocations(locations));
             renderSavedLocations();
             $savedLocations.value = '0';
+            saveLastLocation({ label, lat: coords.lat, lon: coords.lon });
         });
 
         $deleteSavedLocation.addEventListener('click', () => {
@@ -295,8 +343,8 @@
         });
 
         if (loadPluginSettings) {
-            document.getElementById('latitude').value = pluginSettings.latitude;
-            document.getElementById('longitude').value = pluginSettings.longitude;
+            document.getElementById('latitude').value = pluginSettings.latitude || '';
+            document.getElementById('longitude').value = pluginSettings.longitude || '';
             document.getElementById('locationLabel').value = pluginSettings.locationLabel || '';
             document.getElementById('units').value = pluginSettings.units || 'metric';
             document.getElementById('holidayTheming').value = (pluginSettings.holidayTheming || 'off').toLowerCase();
@@ -309,6 +357,8 @@
             document.getElementById('quality').value = (pluginSettings.quality || '2k').toLowerCase();
             document.getElementById('cacheId').value = pluginSettings.cacheId || 'default';
         } else {
+            document.getElementById('latitude').value = '';
+            document.getElementById('longitude').value = '';
             document.getElementById('locationLabel').value = '';
             document.getElementById('units').value = 'metric';
             document.getElementById('holidayTheming').value = 'off';
@@ -323,12 +373,27 @@
         }
 
         renderSavedLocations();
+        ensureDefaultLocation();
+
+        // Keep "last location" fresh when editing coordinates manually.
+        function recordIfValid() {
+            const coords = currentCoords();
+            const label = ($locationLabel?.value || '').trim() || 'Saved location';
+            if (coords.lat === null || coords.lon === null) return;
+            saveLastLocation({ label, lat: coords.lat, lon: coords.lon });
+        }
+        $latitude.addEventListener('change', recordIfValid);
+        $longitude.addEventListener('change', recordIfValid);
+        if ($locationLabel) {
+            $locationLabel.addEventListener('change', recordIfValid);
+        }
 
         // Auto-save the current configured location once (if present) to avoid ever panning from (0,0).
         try {
             const coords = currentCoords();
             const label = ($locationLabel?.value || '').trim();
             if (label && coords.lat !== null && coords.lon !== null) {
+                saveLastLocation({ label, lat: coords.lat, lon: coords.lon });
                 const existing = normalizeLocations(loadSavedLocations());
                 const key = `${label}|${coords.lat.toFixed(6)}|${coords.lon.toFixed(6)}`;
                 const has = existing.some(l => `${l.label}|${l.lat.toFixed(6)}|${l.lon.toFixed(6)}` === key);
