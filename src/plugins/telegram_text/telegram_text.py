@@ -19,7 +19,7 @@ class TelegramText(BasePlugin):
     TEXT_COLOR = "#FFFFFF"
     SHADOW_COLOR = "#000000"
 
-    STYLES = {"simple", "caption", "sticky"}
+    STYLES = {"simple", "caption", "card", "sticky"}
 
     def generate_image(self, settings, device_config):
         text = (settings.get("text") or "").strip()
@@ -147,18 +147,37 @@ class TelegramText(BasePlugin):
         else:
             y = (height - text_height) / 2
 
-        if style == "caption":
+        if style in {"caption", "card"}:
             box_coords = (
                 x - padding_x,
                 y - padding_y,
                 x + text_width + padding_x,
                 y + text_height + padding_y,
             )
-            draw.rounded_rectangle(
-                box_coords,
-                radius=int(font.size * 0.5),
-                fill=(0, 0, 0, 180),
-            )
+            radius = int(font.size * 0.5)
+            if style == "card":
+                # Match the Daily Theme quote card look: white translucent card with subtle outline + shadow.
+                shadow = ImageDraw.Draw(overlay)
+                sx0, sy0, sx1, sy1 = box_coords
+                shadow_offset = max(3, int(font.size * 0.10))
+                shadow.rounded_rectangle(
+                    (sx0 + shadow_offset, sy0 + shadow_offset, sx1 + shadow_offset, sy1 + shadow_offset),
+                    radius=radius,
+                    fill=(0, 0, 0, 60),
+                )
+                draw.rounded_rectangle(
+                    box_coords,
+                    radius=radius,
+                    fill=(255, 255, 255, 235),
+                    outline=(0, 0, 0, 110),
+                    width=2,
+                )
+            else:
+                draw.rounded_rectangle(
+                    box_coords,
+                    radius=radius,
+                    fill=(0, 0, 0, 180),
+                )
         elif style == "sticky":
             box_coords = (
                 x - padding_x,
@@ -194,7 +213,10 @@ class TelegramText(BasePlugin):
                 align="center",
             )
 
-        fill_color = self.TEXT_COLOR if style != "sticky" else "#1A1A1A"
+        if style == "card":
+            fill_color = "#1A1A1A"
+        else:
+            fill_color = self.TEXT_COLOR if style != "sticky" else "#1A1A1A"
         draw.multiline_text(
             (x, y),
             text,

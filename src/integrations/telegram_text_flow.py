@@ -27,6 +27,7 @@ class TelegramTextFlow:
     STYLE_OPTIONS = [
         ("simple", "📝 Simple"),
         ("caption", "🗒️ Caption Box"),
+        ("card", "🪧 Quote Card"),
         ("sticky", "📌 Sticky Note"),
     ]
 
@@ -150,6 +151,14 @@ class TelegramTextFlow:
             f"Rewrite: {rewrite_label}",
             f"Background: {background_label}",
         ]
+        if request.get("style") == "simple" and request.get("background") in {
+            "illustration",
+            "illustration_blur",
+            "ai_image",
+            "custom_ai",
+            "saved",
+        }:
+            lines.append("Tip: Simple can be hard to read on images — try Caption/Card/Sticky or Solid Colour.")
         if request.get("bg_selected") and request.get("background") == "custom_ai":
             prompt_preview = request.get("image_prompt", "").strip()
             if not prompt_preview:
@@ -178,10 +187,15 @@ class TelegramTextFlow:
             text = f"{label} {'✅' if active else ''}".strip()
             return {"text": text, "callback_data": f"txt|{request_id}|style|{value}"}
 
-        style_row = [
-            style_btn("simple", "📝 Simple"),
-            style_btn("caption", "🗒️ Caption"),
-            style_btn("sticky", "📌 Sticky"),
+        style_rows = [
+            [
+                style_btn("simple", "📝 Simple"),
+                style_btn("caption", "🗒️ Caption"),
+            ],
+            [
+                style_btn("card", "🪧 Card"),
+                style_btn("sticky", "📌 Sticky"),
+            ],
         ]
 
         # Rewrite toggle buttons
@@ -216,11 +230,13 @@ class TelegramTextFlow:
 
         keyboard = [
             [{"text": "Choose style:", "callback_data": f"txt|{request_id}|noop"}],
-            style_row,
+        ]
+        keyboard.extend(style_rows)
+        keyboard.extend([
             [{"text": "Rewrite:", "callback_data": f"txt|{request_id}|noop"}],
             rewrite_row,
             [{"text": "Pick background:", "callback_data": f"txt|{request_id}|noop"}],
-        ]
+        ])
         keyboard.extend(bg_rows)
 
         # Contextual actions
