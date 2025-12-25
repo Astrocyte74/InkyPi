@@ -32,6 +32,7 @@ class TelegramBotListener:
 
     API_BASE = "https://api.telegram.org/bot{token}"
     FILE_BASE = "https://api.telegram.org/file/bot{token}"
+    DEFAULT_WEBUI_URL = "http://inkypi.local/"
 
     AI_MODELS = [
         ("gemini-2.5-flash-image", "Gemini 2.5 Flash"),
@@ -74,6 +75,12 @@ class TelegramBotListener:
     }
 
     DAILY_CARD_DISABLED_IDS = {"family"}
+
+    def _webui_url(self) -> str:
+        url = (self.device_config.load_env_key("INKYPI_WEBUI_URL") or "").strip()
+        if not url:
+            url = self.DEFAULT_WEBUI_URL
+        return url
 
     @staticmethod
     def _resolve_default_model(env_value, model_values, fallback):
@@ -599,6 +606,7 @@ class TelegramBotListener:
     def _send_status(self, chat_id):
         # Prefer the actual currently displayed image (works even when the image came from playlists/plugins).
         current_path = getattr(self.device_config, "current_image_file", None)
+        webui = self._webui_url()
         if current_path and os.path.exists(current_path):
             caption = "Current display"
             try:
@@ -645,16 +653,17 @@ class TelegramBotListener:
                     caption = f"🗒️ Card 1 (card={card_id} — {label})"
             except Exception:
                 caption = "Current display"
+            caption = f"{caption}\nWeb UI: {webui}"
             self._send_photo_path(chat_id, current_path, caption=caption)
             return
 
         # Fallback: last Telegram-updated background
         latest_path = os.path.join(self.storage_dir, "latest.png")
         if os.path.exists(latest_path):
-            self._send_photo_path(chat_id, latest_path, caption="Last Telegram background")
+            self._send_photo_path(chat_id, latest_path, caption=f"Last Telegram background\nWeb UI: {webui}")
             return
 
-        self._send_message(chat_id, "No image available yet.")
+        self._send_message(chat_id, f"No image available yet.\n\nWeb UI: {webui}")
 
     def _send_message(self, chat_id, text):
         return self._api_post(
@@ -2184,6 +2193,7 @@ class TelegramBotListener:
 
     def _send_help(self, chat_id):
         model_labels = ", ".join(label for _, label in self.AI_MODELS)
+        webui = self._webui_url()
         lines = [
             "InkyPi Telegram Controls",
             "",
@@ -2197,6 +2207,7 @@ class TelegramBotListener:
             "- /cat clear — go back to the auto scene generator.",
             "- /theme — Daily Theme dashboard (illustration + cards).",
             "- /card1, /card2, /card3 — pick card slots directly (optional).",
+            f"- Web UI: {webui}",
             "",
             "AI image (/ai):",
             "- /ai <prompt> — opens the image generator with buttons for Model/Quality/Style/Palette.",
@@ -2684,6 +2695,7 @@ class TelegramBotListener:
             theme_line = "Illustration: unavailable"
 
         card_lines = []
+        missing_slots = []
         for slot in (1, 2, 3):
             line = f"Card {slot}: not configured"
             try:
@@ -2699,13 +2711,17 @@ class TelegramBotListener:
                     else:
                         line = f"Card {slot}: {label} (`{card_id}`) • {bg_label}"
                 else:
-                    line = (
-                        f"Card {slot}: not configured "
-                        f"(add a `daily_theme_card` instance named `card{slot}` to a playlist)"
-                    )
+                    line = f"Card {slot}: not configured"
+                    missing_slots.append(slot)
             except Exception:
                 line = f"Card {slot}: unavailable"
             card_lines.append(line)
+
+        footer_lines = []
+        if missing_slots:
+            slots = ", ".join(f"`card{slot}`" for slot in missing_slots)
+            footer_lines.append(f"To enable: add a `daily_theme_card` instance named {slots} to a playlist.")
+        footer_lines.append(f"Web UI: {self._webui_url()}")
 
         text = "\n".join(
             [
@@ -2715,6 +2731,7 @@ class TelegramBotListener:
                 *card_lines,
                 "",
                 "Use the buttons below to adjust.",
+                *footer_lines,
             ]
         )
 
