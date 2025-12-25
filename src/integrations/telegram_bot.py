@@ -34,8 +34,8 @@ class TelegramBotListener:
     FILE_BASE = "https://api.telegram.org/file/bot{token}"
 
     AI_MODELS = [
-        ("gemini-2.5-flash-image", "Gemini 2.5 Flash Image"),
-        ("gemini-3-pro-image-preview", "Gemini 3 Pro Image (Preview)"),
+        ("gemini-2.5-flash-image", "Gemini 2.5 Flash"),
+        ("gemini-3-pro-image-preview", "Gemini 3 Pro (Preview)"),
         ("dall-e-3", "DALL·E 3"),
         ("gpt-image-1", "GPT Image 1"),
         ("dall-e-2", "DALL·E 2"),
@@ -1830,6 +1830,8 @@ class TelegramBotListener:
         keyboard = [
             [
                 {"text": f"⚙️ Model: {model_label}", "callback_data": f"ai|{request_id}|cycle_model"},
+            ],
+            [
                 {"text": f"📐 Quality: {quality_text}", "callback_data": f"ai|{request_id}|cycle_quality"},
             ]
         ]
