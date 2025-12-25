@@ -516,7 +516,8 @@ class TelegramBotListener:
                 return
             self._init_text_prompt(chat_id, message)
         elif text.lower().startswith("/weather") or text.lower().startswith("/wx"):
-            self._send_weather_menu(chat_id)
+            webui = self._webui_url()
+            self._send_message(chat_id, f"Weather is configured in the Web UI.\n\nWeb UI: {webui}")
         elif re.match(r"^/t(?:\s|$)", text.strip(), flags=re.IGNORECASE):
             match = re.match(r"^/t(?:\s+(.*))?$", text.strip(), flags=re.IGNORECASE)
             arg = (match.group(1) or "").strip() if match else ""
@@ -1217,34 +1218,16 @@ class TelegramBotListener:
             arg = parts[2] if len(parts) > 2 else None
             chat_id = callback_query.get("message", {}).get("chat", {}).get("id")
             message_id = callback_query.get("message", {}).get("message_id")
-            opts = self._get_weather_options()
             if action == "open":
-                self._send_weather_menu(chat_id)
-                self._answer_callback(callback_query["id"], text="Weather options opened.")
-            elif action == "badge" and arg in {"on", "off"}:
-                enabled = arg == "on"
-                opts.setdefault("weather", {}).setdefault("badge", {})["enabled"] = enabled
-                self._set_weather_options(opts)
-                self._refresh_weather_menu(chat_id, message_id)
-                self._answer_callback(callback_query["id"], text=f"Badge: {'On' if enabled else 'Off'}")
-            elif action == "pos" and arg == "cycle":
-                pos = opts.get("weather", {}).get("badge", {}).get("position", "tr").lower()
-                order = ["tr", "tl", "bl", "br"]
+                self._send_weather_menu(chat_id, message_id=message_id)
+                self._answer_callback(callback_query["id"], text="Weather options (info).")
+            elif action in {"badge", "pos", "overlay"}:
+                # Backward compatibility: older menus may still have toggles, but we no longer allow changing these via Telegram.
                 try:
-                    idx = order.index(pos)
-                except ValueError:
-                    idx = 0
-                new_pos = order[(idx + 1) % len(order)]
-                opts.setdefault("weather", {}).setdefault("badge", {})["position"] = new_pos
-                self._set_weather_options(opts)
-                self._refresh_weather_menu(chat_id, message_id)
-                self._answer_callback(callback_query["id"], text=f"Badge pos: {new_pos.upper()}")
-            elif action == "overlay" and arg in {"on", "off"}:
-                enabled = arg == "on"
-                opts.setdefault("weather", {}).setdefault("overlay", {})["enabled"] = enabled
-                self._set_weather_options(opts)
-                self._refresh_weather_menu(chat_id, message_id)
-                self._answer_callback(callback_query["id"], text=f"Overlay: {'On' if enabled else 'Off'}")
+                    self._send_weather_menu(chat_id, message_id=message_id)
+                except Exception:
+                    logger.exception("Failed to refresh disabled weather menu")
+                self._answer_callback(callback_query["id"], text="Disabled (use Web UI).")
             elif action == "close":
                 try:
                     self._api_post("editMessageReplyMarkup", data={
@@ -2100,34 +2083,21 @@ class TelegramBotListener:
         self.device_config.update_config(cfg)
 
     def _send_weather_menu(self, chat_id, message_id=None):
-        opts = self._get_weather_options()
-        badge_on = opts["weather"]["badge"]["enabled"]
-        pos = opts["weather"]["badge"]["position"].upper()
-        overlay_on = opts["weather"]["overlay"]["enabled"]
+        webui = self._webui_url()
         lines = [
             "🌦 Weather Options",
             "",
-            f"Badge: {'On' if badge_on else 'Off'} (pos {pos})",
-            f"Overlay: {'On' if overlay_on else 'Off'}",
+            "Telegram weather overlays are disabled.",
             "",
             "Notes:",
-            "- Badge adds a small temperature icon in a corner.",
-            "- Full overlay adds a bottom caption bar with weather summary.",
-            "- When overlay is On here, it applies to AI, text, /load, and slideshows (skipped for composite images).",
+            "- The display uses the 2-panel Daily Theme layout (left content + right weather sidebar).",
+            "- Change weather location/units in the Web UI (Daily Cat Weather plugin settings).",
+            f"- Web UI: {webui}",
         ]
         text = "\n".join(lines)
 
         kb = {
             "inline_keyboard": [
-                [
-                    {"text": f"🌤 Badge: {'On' if badge_on else 'Off'}", "callback_data": f"wx|badge|{'off' if badge_on else 'on'}"},
-                ],
-                [
-                    {"text": f"📍 Badge Pos: {pos}", "callback_data": "wx|pos|cycle"},
-                ],
-                [
-                    {"text": f"🗒️ Full Overlay: {'On' if overlay_on else 'Off'}", "callback_data": f"wx|overlay|{'off' if overlay_on else 'on'}"},
-                ],
                 [
                     {"text": "✖️ Close", "callback_data": "wx|close"},
                 ],
@@ -2478,10 +2448,6 @@ class TelegramBotListener:
             "- /load — browse saved images (preview, display now, or use as /txt background).",
             "- /load <name> — display a saved image immediately.",
             "",
-            "Weather (/weather or /wx):",
-            "- Configure badge vs overlay and badge position.",
-            "- Requires the Weather plugin to be configured (location + weather API key).",
-            "",
             "Slideshow (/slideshow):",
             "- /slideshow — open controls (filter, interval, shuffle, weather).",
             "- /slideshow start [all|bg|composite] [interval=N] [shuffle=on|off] [weather=off|badge|overlay]",
@@ -2499,7 +2465,6 @@ class TelegramBotListener:
                     {"text": "📂 Load", "callback_data": "help|load"},
                 ],
                 [
-                    {"text": "🌦 Weather", "callback_data": "help|weather"},
                     {"text": "🎞 Slideshow", "callback_data": "help|slideshow"},
                 ],
                 [
