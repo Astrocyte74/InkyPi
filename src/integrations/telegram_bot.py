@@ -415,6 +415,13 @@ class TelegramBotListener:
             self._init_text_prompt(chat_id, message)
         elif text.lower().startswith("/weather") or text.lower().startswith("/wx"):
             self._send_weather_menu(chat_id)
+        elif re.match(r"^/t(?:\s|$)", text.strip(), flags=re.IGNORECASE):
+            match = re.match(r"^/t(?:\s+(.*))?$", text.strip(), flags=re.IGNORECASE)
+            arg = (match.group(1) or "").strip() if match else ""
+            if not arg:
+                self._send_daily_theme_dashboard(chat_id)
+            else:
+                self._set_daily_cat_theme(chat_id, arg)
         elif text.lower().startswith("/theme"):
             parts = text.split(maxsplit=1)
             arg = parts[1].strip() if len(parts) > 1 else ""
