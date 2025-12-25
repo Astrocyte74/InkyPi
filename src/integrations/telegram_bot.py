@@ -573,8 +573,15 @@ class TelegramBotListener:
             download_resp.raise_for_status()
 
             image = Image.open(BytesIO(download_resp.content)).convert("RGB")
-            saved_path = self._save_image(image)
-            self._display_image(image)
+            final_img = image
+            try:
+                final_img = self._compose_with_daily_sidebar(final_img)
+            except Exception:
+                logger.exception("Failed to compose Telegram photo with Daily Theme sidebar; using raw image.")
+                final_img = image
+
+            saved_path = self._save_image(final_img)
+            self._display_image(final_img)
 
             self._send_message(chat_id, "Image received and sent to display.")
             logger.info("Updated display from Telegram photo %s", saved_path)
