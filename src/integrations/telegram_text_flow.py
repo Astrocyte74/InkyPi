@@ -79,6 +79,28 @@ class TelegramTextFlow:
         }
         self._WEATHER_TTL_SECONDS = 900
 
+    def _banner_override_today(self):
+        try:
+            override = self.device_config.get_config("banner_override", default=None)
+        except Exception:
+            return None
+        if not isinstance(override, dict):
+            return None
+        day = str(override.get("day") or "").strip()
+        headline = str(override.get("headline") or "").strip()
+        detail = str(override.get("detail") or "").strip()
+        if not day or not headline:
+            return None
+        tz_str = self.device_config.get_config("timezone", default="UTC")
+        try:
+            tz = pytz.timezone(tz_str)
+        except Exception:
+            tz = pytz.UTC
+        today = datetime.now(tz).date().isoformat()
+        if day != today:
+            return None
+        return {"day": day, "headline": headline, "detail": detail}
+
     # --- Request lifecycle -------------------------------------------------
 
     def create_request(self, chat_id, text):
@@ -151,6 +173,12 @@ class TelegramTextFlow:
             f"Rewrite: {rewrite_label}",
             f"Background: {background_label}",
         ]
+        banner = self._banner_override_today()
+        if banner:
+            headline = banner.get("headline") or ""
+            if len(headline) > 60:
+                headline = headline[:57].rstrip() + "…"
+            lines.append(f"Banner (today): {headline}")
         if request.get("style") == "simple" and request.get("background") in {
             "illustration",
             "illustration_blur",
@@ -235,6 +263,11 @@ class TelegramTextFlow:
         keyboard.extend([
             [{"text": "Rewrite:", "callback_data": f"txt|{request_id}|noop"}],
             rewrite_row,
+            [{"text": "Banner:", "callback_data": f"txt|{request_id}|noop"}],
+            [
+                {"text": "📣 Set as Today’s Banner", "callback_data": f"txt|{request_id}|banner|set"},
+                {"text": "🧹 Clear Banner", "callback_data": f"txt|{request_id}|banner|clear"},
+            ],
             [{"text": "Pick background:", "callback_data": f"txt|{request_id}|noop"}],
         ])
         keyboard.extend(bg_rows)
@@ -339,7 +372,6 @@ class TelegramTextFlow:
                     ready = True
                 if ready:
                     keyboard.append([
-                        {"text": "📣 Set as Today’s Banner", "callback_data": f"txt|{request_id}|banner|set"},
                         {"text": "🪄 Generate", "callback_data": f"txt|{request_id}|confirm"},
                         {"text": "✖️ Cancel", "callback_data": f"txt|{request_id}|cancel"},
                     ])

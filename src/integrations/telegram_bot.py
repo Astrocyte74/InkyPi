@@ -1216,6 +1216,13 @@ class TelegramBotListener:
                     except Exception as exc:
                         logger.exception("Failed to set banner override: %s", exc)
                         self._answer_callback(callback_query["id"], text="Banner failed.")
+                elif param == "clear":
+                    try:
+                        self._clear_banner_override()
+                        self._refresh_text_message(request, status="Banner cleared (family banner will be used if applicable).")
+                    except Exception:
+                        logger.exception("Failed to clear banner override")
+                    self._answer_callback(callback_query["id"], text="Banner cleared.")
                 else:
                     self._answer_callback(callback_query["id"])
             elif action == "confirm":
