@@ -85,6 +85,18 @@
         "avoid": "Avoid children's book illustration styling. Avoid modern vector-cartoon look. Avoid anime/cel-paint."
       }
     },
+    {
+      "id": "van_gogh",
+      "label": "Van Gogh Cat",
+      "character": {
+        "noun": "cat",
+        "prompt": "Main character: a larger-than-average (but not obese) orange-and-white cat (orange/ginger coat with a white chest and paws; no other fur colours)."
+      },
+      "style": {
+        "prompt": "PRIMARY art direction: Render the scene in the style of Vincent van Gogh, with expressive impasto brushstrokes, swirling motion, and vibrant post-impressionist energy.",
+        "avoid": "Avoid flat vector shapes. Avoid comic-book inking. Avoid photorealism."
+      }
+    },
 
     {
       "id": "storybook_dog",
