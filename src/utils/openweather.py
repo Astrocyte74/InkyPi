@@ -27,7 +27,35 @@ class WeatherSnapshot:
     daily: list[dict[str, Any]]
 
 
-def fetch_weather_snapshot(api_key: str, units: str, lat: str, lon: str, now: datetime) -> WeatherSnapshot:
+_WEATHER_CACHE: dict[tuple[str, str, str, str], tuple[float, dict[str, Any]]] = {}
+
+
+def fetch_weather_snapshot(
+    api_key: str,
+    units: str,
+    lat: str,
+    lon: str,
+    now: datetime,
+    *,
+    cache_ttl_sec: int = 0,
+) -> WeatherSnapshot:
+    cache_key = (str(api_key), str(units), str(lat), str(lon))
+    ttl = max(0, int(cache_ttl_sec or 0))
+    if ttl > 0:
+        cached = _WEATHER_CACHE.get(cache_key)
+        if cached:
+            cached_at, payload = cached
+            if (now.timestamp() - cached_at) <= ttl:
+                return WeatherSnapshot(
+                    now=now,
+                    units=str(payload.get("units") or units),
+                    current_temp=float(payload.get("current_temp") or 0.0),
+                    feels_like=float(payload.get("feels_like") or payload.get("current_temp") or 0.0),
+                    description=str(payload.get("description") or "weather"),
+                    icon=str(payload.get("icon") or "01d"),
+                    daily=list(payload.get("daily") or []),
+                )
+
     url = WEATHER_URL.format(lat=lat, long=lon, units=units, api_key=api_key)
     try:
         response = requests.get(url, timeout=20)
@@ -49,6 +77,19 @@ def fetch_weather_snapshot(api_key: str, units: str, lat: str, lon: str, now: da
     current_temp = float(current.get("temp") or 0.0)
     feels_like = float(current.get("feels_like") or current_temp)
 
+    if ttl > 0:
+        _WEATHER_CACHE[cache_key] = (
+            now.timestamp(),
+            {
+                "units": units,
+                "current_temp": current_temp,
+                "feels_like": feels_like,
+                "description": description,
+                "icon": icon,
+                "daily": daily,
+            },
+        )
+
     return WeatherSnapshot(
         now=now,
         units=units,
@@ -58,4 +99,3 @@ def fetch_weather_snapshot(api_key: str, units: str, lat: str, lon: str, now: da
         icon=icon,
         daily=daily,
     )
-

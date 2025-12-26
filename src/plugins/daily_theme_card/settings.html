@@ -63,6 +63,14 @@
 </div>
 
 <div class="form-group">
+    <label for="weatherCacheMinutes" class="form-label">Weather Cache (minutes):</label>
+    <input type="number" id="weatherCacheMinutes" name="weatherCacheMinutes" class="form-input" min="0" max="1440" step="5" value="30">
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Weather is cached per location to reduce API calls. Set to <code>0</code> to disable caching.
+    </div>
+</div>
+
+<div class="form-group">
     <label for="backgroundMode" class="form-label">Card Background:</label>
     <select id="backgroundMode" name="backgroundMode" class="form-input">
         <option value="plain">Plain</option>
@@ -175,7 +183,8 @@
         const $saveCurrentLocation = document.querySelector('#saveCurrentLocation');
         const $deleteSavedLocation = document.querySelector('#deleteSavedLocation');
 
-        const STORAGE_KEY = 'inkypi.daily_theme_card.saved_locations';
+        const STORAGE_KEY = 'inkypi.saved_locations';
+        const LEGACY_STORAGE_KEY = 'inkypi.daily_theme_card.saved_locations';
 
         let map, marker;
 
@@ -208,9 +217,9 @@
             return cleaned;
         }
 
-        function loadSavedLocations() {
+        function loadLocationsFromKey(key) {
             try {
-                const raw = localStorage.getItem(STORAGE_KEY);
+                const raw = localStorage.getItem(key);
                 const parsed = raw ? JSON.parse(raw) : [];
                 return Array.isArray(parsed) ? parsed : [];
             } catch (e) {
@@ -218,11 +227,25 @@
             }
         }
 
+        function loadSavedLocations() {
+            const merged = [
+                ...loadLocationsFromKey(STORAGE_KEY),
+                ...loadLocationsFromKey(LEGACY_STORAGE_KEY),
+            ];
+            return normalizeLocations(merged);
+        }
+
         function saveSavedLocations(locations) {
+            const normalized = normalizeLocations(locations);
             try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(locations));
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
             } catch (e) {
                 // ignore storage errors
+            }
+            try {
+                localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(normalized));
+            } catch (e) {
+                // ignore
             }
         }
 
@@ -397,6 +420,7 @@
             document.getElementById('units').value = pluginSettings.units || 'metric';
             document.getElementById('dailyRefreshTime').value = pluginSettings.dailyRefreshTime || '04:00';
             document.getElementById('forecastDays').value = pluginSettings.forecastDays || '3';
+            document.getElementById('weatherCacheMinutes').value = parseInt((pluginSettings.weatherCacheMinutes || '30').toString(), 10) || 30;
             document.getElementById('backgroundMode').value = (pluginSettings.backgroundMode || 'illustration_blur').toLowerCase();
             document.getElementById('illustrationCacheId').value = pluginSettings.illustrationCacheId || '';
             const ids = parseCardIds(pluginSettings.cardIds);
@@ -409,6 +433,7 @@
             document.getElementById('units').value = 'metric';
             document.getElementById('dailyRefreshTime').value = '04:00';
             document.getElementById('forecastDays').value = '3';
+            document.getElementById('weatherCacheMinutes').value = 30;
             document.getElementById('backgroundMode').value = 'illustration_blur';
             document.getElementById('illustrationCacheId').value = '';
             applySelection(['inspiration']);
@@ -417,6 +442,8 @@
         }
         updateRotationVisibility();
 
+        // Migrate any legacy locations into the shared key.
+        saveSavedLocations(loadSavedLocations());
         renderSavedLocations();
 
         // Auto-save the current configured location once (if present) to avoid ever panning from (0,0).

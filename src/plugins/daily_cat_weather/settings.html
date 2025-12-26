@@ -87,6 +87,14 @@
 </div>
 
 <div class="form-group">
+    <label for="weatherCacheMinutes" class="form-label">Weather Cache (minutes):</label>
+    <input type="number" id="weatherCacheMinutes" name="weatherCacheMinutes" class="form-input" min="0" max="1440" step="5" value="30">
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Weather is cached per location to reduce API calls. Set to <code>0</code> to disable caching.
+    </div>
+</div>
+
+<div class="form-group">
     <label for="imageModel" class="form-label">Gemini Image Model:</label>
     <select id="imageModel" name="imageModel" class="form-input">
         <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image</option>
@@ -155,7 +163,8 @@
         const $saveCurrentLocation = document.querySelector('#saveCurrentLocation');
         const $deleteSavedLocation = document.querySelector('#deleteSavedLocation');
 
-        const STORAGE_KEY = 'inkypi.daily_cat_weather.saved_locations';
+        const STORAGE_KEY = 'inkypi.saved_locations';
+        const LEGACY_STORAGE_KEY = 'inkypi.daily_cat_weather.saved_locations';
         const LAST_LOCATION_KEY = 'inkypi.daily_cat_weather.last_location';
 
         let map, marker;
@@ -189,9 +198,9 @@
             return cleaned;
         }
 
-        function loadSavedLocations() {
+        function loadLocationsFromKey(key) {
             try {
-                const raw = localStorage.getItem(STORAGE_KEY);
+                const raw = localStorage.getItem(key);
                 const parsed = raw ? JSON.parse(raw) : [];
                 return Array.isArray(parsed) ? parsed : [];
             } catch (e) {
@@ -199,11 +208,25 @@
             }
         }
 
+        function loadSavedLocations() {
+            const merged = [
+                ...loadLocationsFromKey(STORAGE_KEY),
+                ...loadLocationsFromKey(LEGACY_STORAGE_KEY),
+            ];
+            return normalizeLocations(merged);
+        }
+
         function saveSavedLocations(locations) {
+            const normalized = normalizeLocations(locations);
             try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(locations));
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
             } catch (e) {
                 // ignore storage errors
+            }
+            try {
+                localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(normalized));
+            } catch (e) {
+                // ignore
             }
         }
 
@@ -352,6 +375,7 @@
             document.getElementById('holidayWindowDays').value = pluginSettings.holidayWindowDays || '14';
             document.getElementById('dailyRefreshTime').value = pluginSettings.dailyRefreshTime || '04:00';
             document.getElementById('forecastDays').value = pluginSettings.forecastDays || '3';
+            document.getElementById('weatherCacheMinutes').value = parseInt((pluginSettings.weatherCacheMinutes || '30').toString(), 10) || 30;
             document.getElementById('imageModel').value = pluginSettings.imageModel || 'gemini-2.5-flash-image';
             document.getElementById('imageTheme').value = (pluginSettings.imageTheme || 'storybook').toLowerCase();
             document.getElementById('quality').value = (pluginSettings.quality || '2k').toLowerCase();
@@ -366,12 +390,15 @@
             document.getElementById('holidayWindowDays').value = '14';
             document.getElementById('dailyRefreshTime').value = '04:00';
             document.getElementById('forecastDays').value = '3';
+            document.getElementById('weatherCacheMinutes').value = 30;
             document.getElementById('imageModel').value = 'gemini-2.5-flash-image';
             document.getElementById('imageTheme').value = 'storybook';
             document.getElementById('quality').value = '2k';
             document.getElementById('cacheId').value = 'default';
         }
 
+        // Migrate any legacy locations into the shared key.
+        saveSavedLocations(loadSavedLocations());
         renderSavedLocations();
         ensureDefaultLocation();
 

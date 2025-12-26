@@ -62,6 +62,9 @@ class DailyThemeCard(BasePlugin):
         forecast_days = int(settings.get("forecastDays") or 3)
         forecast_days = max(1, min(5, forecast_days))
 
+        weather_cache_minutes = int(settings.get("weatherCacheMinutes") or 30)
+        weather_cache_minutes = max(0, min(1440, weather_cache_minutes))
+
         active_card_id, day_key, bucket = self.resolve_active_card(settings, device_config)
         cycle_key = day_key if bucket <= 0 else f"{day_key}|{bucket}"
 
@@ -86,7 +89,14 @@ class DailyThemeCard(BasePlugin):
 
         weather = None
         try:
-            weather = fetch_weather_snapshot(api_key=owm_key, units=units, lat=lat, lon=lon, now=now)
+            weather = fetch_weather_snapshot(
+                api_key=owm_key,
+                units=units,
+                lat=lat,
+                lon=lon,
+                now=now,
+                cache_ttl_sec=weather_cache_minutes * 60,
+            )
         except Exception:
             logger.exception("Failed to fetch weather; continuing without sidebar data.")
 

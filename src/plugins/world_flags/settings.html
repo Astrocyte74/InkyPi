@@ -52,6 +52,14 @@
 </div>
 
 <div class="form-group">
+    <label for="weatherCacheMinutes" class="form-label">Weather Cache (minutes):</label>
+    <input type="number" id="weatherCacheMinutes" name="weatherCacheMinutes" class="form-input" min="0" max="1440" step="5" value="30">
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Weather is cached per location to reduce API calls. Set to <code>0</code> to disable caching.
+    </div>
+</div>
+
+<div class="form-group">
     <label for="flagsPath" class="form-label">Flags Manifest Path (optional):</label>
     <input type="text" id="flagsPath" name="flagsPath" placeholder="plugins/daily_theme_card/flags/flags.json" class="form-input">
     <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
@@ -121,7 +129,8 @@
         const $rotationMode = document.querySelector('#rotationMode');
         const $rotationPeriodContainer = document.querySelector('#rotationPeriodContainer');
 
-        const STORAGE_KEY = 'inkypi.world_flags.saved_locations';
+        const STORAGE_KEY = 'inkypi.saved_locations';
+        const LEGACY_STORAGE_KEY = 'inkypi.world_flags.saved_locations';
 
         let map, marker;
 
@@ -154,9 +163,9 @@
             return cleaned;
         }
 
-        function loadSavedLocations() {
+        function loadLocationsFromKey(key) {
             try {
-                const raw = localStorage.getItem(STORAGE_KEY);
+                const raw = localStorage.getItem(key);
                 const parsed = raw ? JSON.parse(raw) : [];
                 return Array.isArray(parsed) ? parsed : [];
             } catch (e) {
@@ -164,9 +173,23 @@
             }
         }
 
+        function loadSavedLocations() {
+            const merged = [
+                ...loadLocationsFromKey(STORAGE_KEY),
+                ...loadLocationsFromKey(LEGACY_STORAGE_KEY),
+            ];
+            return normalizeLocations(merged);
+        }
+
         function saveSavedLocations(locations) {
+            const normalized = normalizeLocations(locations);
             try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(locations));
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+            } catch (e) {
+                // ignore
+            }
+            try {
+                localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(normalized));
             } catch (e) {
                 // ignore
             }
@@ -276,6 +299,7 @@
             document.getElementById('locationLabel').value = pluginSettings.locationLabel || '';
             document.getElementById('units').value = pluginSettings.units || 'metric';
             document.getElementById('forecastDays').value = pluginSettings.forecastDays || '3';
+            document.getElementById('weatherCacheMinutes').value = parseInt((pluginSettings.weatherCacheMinutes || '30').toString(), 10) || 30;
             document.getElementById('flagsPath').value = pluginSettings.flagsPath || '';
             document.getElementById('includeCodes').value = pluginSettings.includeCodes || '';
             document.getElementById('excludeCodes').value = pluginSettings.excludeCodes || '';
@@ -285,13 +309,15 @@
         } else {
             document.getElementById('units').value = 'metric';
             document.getElementById('forecastDays').value = '3';
+            document.getElementById('weatherCacheMinutes').value = 30;
             document.getElementById('dailyRefreshTime').value = '04:00';
             document.getElementById('rotationMode').value = 'daily';
             document.getElementById('rotationPeriodMinutes').value = 60;
         }
 
         updateRotationVisibility();
+        // Migrate any legacy locations into the shared key.
+        saveSavedLocations(loadSavedLocations());
         renderSavedLocations();
     });
 </script>
-

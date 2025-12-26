@@ -66,6 +66,9 @@ class WorldFlags(BasePlugin):
         forecast_days = int(settings.get("forecastDays") or 3)
         forecast_days = max(1, min(5, forecast_days))
 
+        weather_cache_minutes = int(settings.get("weatherCacheMinutes") or 30)
+        weather_cache_minutes = max(0, min(1440, weather_cache_minutes))
+
         tz_str = device_config.get_config("timezone", default="UTC")
         tz = pytz.timezone(tz_str)
         now = datetime.now(tz)
@@ -104,7 +107,14 @@ class WorldFlags(BasePlugin):
 
         weather = None
         try:
-            weather = fetch_weather_snapshot(api_key=owm_key, units=units, lat=lat, lon=lon, now=now)
+            weather = fetch_weather_snapshot(
+                api_key=owm_key,
+                units=units,
+                lat=lat,
+                lon=lon,
+                now=now,
+                cache_ttl_sec=weather_cache_minutes * 60,
+            )
         except Exception:
             logger.exception("Failed to fetch weather; continuing without sidebar data.")
 

@@ -193,7 +193,9 @@ class DailyCatWeather(BasePlugin):
 
         weather = None
         try:
-            weather = self._fetch_weather_snapshot(owm_key, units, lat, lon, now)
+            weather_cache_minutes = int(settings.get("weatherCacheMinutes") or 30)
+            weather_cache_minutes = max(0, min(1440, weather_cache_minutes))
+            weather = self._fetch_weather_snapshot(owm_key, units, lat, lon, now, cache_ttl_sec=weather_cache_minutes * 60)
         except Exception:
             logger.exception("Failed to fetch weather; continuing without overlay.")
 
@@ -355,8 +357,15 @@ class DailyCatWeather(BasePlugin):
         payload = json.dumps(values, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
 
-    def _fetch_weather_snapshot(self, api_key, units, lat, lon, now):
-        return fetch_weather_snapshot(api_key=api_key, units=units, lat=lat, lon=lon, now=now)
+    def _fetch_weather_snapshot(self, api_key, units, lat, lon, now, *, cache_ttl_sec: int = 0):
+        return fetch_weather_snapshot(
+            api_key=api_key,
+            units=units,
+            lat=lat,
+            lon=lon,
+            now=now,
+            cache_ttl_sec=cache_ttl_sec,
+        )
 
     def _build_prompt(
         self,
