@@ -203,7 +203,12 @@ def next_item():
 
     include_image = str(request.args.get("image", "1")).strip().lower() not in {"0", "false", "no"}
     include_image_base64 = str(request.args.get("format", "base64")).strip().lower() in {"base64", "b64", "json"}
-    force_refresh = str(request.args.get("force", "0")).strip().lower() in {"1", "true", "yes"}
+    force_raw = str(request.args.get("force", "")).strip().lower()
+    force_mode = "smart"
+    if force_raw in {"1", "true", "yes", "all"}:
+        force_mode = "all"
+    elif force_raw in {"0", "false", "no", "none"}:
+        force_mode = "none"
 
     device_config = current_app.config["DEVICE_CONFIG"]
     display_manager = current_app.config["DISPLAY_MANAGER"]
@@ -236,6 +241,17 @@ def next_item():
         if not plugin_config:
             return jsonify({"error": f"Plugin '{plugin_instance.plugin_id}' not found."}), 404
 
+        # Default behavior ("smart"):
+        # - Always regenerate "light" slides like flags/quotes (so you don't see repeats)
+        # - Do NOT regenerate expensive AI slides like the daily illustration unless explicitly forced.
+        force_refresh = False
+        if force_mode == "all":
+            force_refresh = True
+        elif force_mode == "none":
+            force_refresh = False
+        else:
+            force_refresh = plugin_instance.plugin_id in {"world_flags", "daily_theme_card"}
+
         plugin = get_plugin_instance(plugin_config)
         image = PlaylistRefresh(playlist, plugin_instance, force=force_refresh).execute(plugin, device_config, now)
 
@@ -254,5 +270,10 @@ def next_item():
         device_config.write_config()
 
     payload = _build_status_payload(now=now, include_image=include_image, include_image_base64=include_image_base64)
-    payload["action"] = {"type": "next", "playlist": playlist.name}
+    payload["action"] = {
+        "type": "next",
+        "playlist": playlist.name,
+        "force_mode": force_mode,
+        "forced_refresh": bool(force_refresh),
+    }
     return jsonify(payload)
