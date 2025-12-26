@@ -354,15 +354,14 @@ class WorldFlags(BasePlugin):
         draw = ImageDraw.Draw(img)
 
         pad = max(14, int(w * 0.03))
-        gap = max(10, int(w * 0.02))
-        inner_w = max(10, w - (pad * 2) - gap)
-        flag_w = int(inner_w * 0.68)
-        flag_w = max(10, min(inner_w - 10, flag_w))
-        info_w = max(10, inner_w - flag_w)
+        gap_y = max(12, int(h * 0.03))
+        inner_h = max(10, h - (pad * 2) - gap_y)
+        flag_h = int(inner_h * 0.62)
+        flag_h = max(10, min(inner_h - 10, flag_h))
+        info_h = max(10, inner_h - flag_h)
 
-        flag_region = (pad, pad, pad + flag_w, h - pad)
-        info_x0 = pad + flag_w + gap
-        info_region = (info_x0, pad, info_x0 + info_w, h - pad)
+        flag_region = (pad, pad, w - pad, pad + flag_h)
+        info_region = (pad, pad + flag_h + gap_y, w - pad, pad + flag_h + gap_y + info_h)
 
         # Flag image
         try:
@@ -380,16 +379,28 @@ class WorldFlags(BasePlugin):
             fy = flag_region[1] + (fh - fitted.size[1]) // 2
             img.paste(fitted, (fx, fy))
 
+        # Flag frame (subtle)
+        fr = max(10, int(min(flag_region[2] - flag_region[0], flag_region[3] - flag_region[1]) * 0.04))
+        try:
+            draw.rounded_rectangle(
+                (flag_region[0], flag_region[1], flag_region[2], flag_region[3]),
+                radius=fr,
+                outline=(0, 0, 0, 70),
+                width=2,
+            )
+        except Exception:
+            draw.rectangle((flag_region[0], flag_region[1], flag_region[2], flag_region[3]), outline=(0, 0, 0))
+
         # Info box
         ix0, iy0, ix1, iy1 = info_region
         box_w = max(10, ix1 - ix0)
         box_h = max(10, iy1 - iy0)
-        radius = max(10, int(min(box_w, box_h) * 0.06))
+        radius = max(12, int(min(box_w, box_h) * 0.08))
 
         # Shadow
         overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         od = ImageDraw.Draw(overlay)
-        shadow_off = max(3, int(w * 0.01))
+        shadow_off = max(3, int(min(w, h) * 0.012))
         od.rounded_rectangle(
             (ix0 + shadow_off, iy0 + shadow_off, ix1 + shadow_off, iy1 + shadow_off),
             radius=radius,
@@ -407,8 +418,8 @@ class WorldFlags(BasePlugin):
         img = img_rgba.convert("RGB")
         draw = ImageDraw.Draw(img)
 
-        title_font_size = max(18, int(w * 0.055))
-        line_font_size = max(14, int(w * 0.042))
+        title_font_size = max(20, int(min(w, h) * 0.065))
+        line_font_size = max(14, int(min(w, h) * 0.048))
         title_font = self._font("Jost", title_font_size, bold=True)
         line_font = self._font("Jost", line_font_size, bold=False)
 
@@ -445,12 +456,12 @@ class WorldFlags(BasePlugin):
         y = iy0 + text_pad_y
         title = truncate(entry.title, title_font)
         draw.text((ix0 + text_pad_x, y), title, font=title_font, fill=(0, 0, 0))
-        y += int(title_font_size * 1.25)
+        y += int(title_font_size * 1.30)
 
         # Divider line
         line_y = y - int(line_font_size * 0.35)
         draw.line((ix0 + text_pad_x, line_y, ix1 - text_pad_x, line_y), fill=(0, 0, 0, 80), width=2)
-        y += int(line_font_size * 0.2)
+        y += int(line_font_size * 0.15)
 
         for line in entry.lines[:3]:
             line = truncate(line, line_font)
