@@ -26,6 +26,7 @@ SIDEBAR_WIDTH_RATIO = 0.30
 DEFAULT_CARD_ID = "inspiration"
 DEFAULT_ROTATION_MODE = "daily"  # daily|sequential|random
 DEFAULT_ROTATION_PERIOD_MINUTES = 60
+DISABLED_CARD_IDS = {"family"}
 
 
 class DailyThemeCard(BasePlugin):
@@ -36,7 +37,9 @@ class DailyThemeCard(BasePlugin):
             "service": "OpenWeatherMap",
             "expected_key": "OPEN_WEATHER_MAP_SECRET",
         }
-        template_params["card_leaf_choices"] = self._card_leaf_choices()
+        template_params["card_leaf_choices"] = [
+            item for item in (self._card_leaf_choices() or []) if (item.get("id") or "").strip().lower() not in DISABLED_CARD_IDS
+        ]
         template_params["card_groups"] = self._card_groups()
         return template_params
 
