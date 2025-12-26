@@ -391,7 +391,7 @@ class TelegramBotListener:
         elif "photo" in message:
             self._handle_photo(message["photo"], chat_id)
         else:
-            self._send_message(chat_id, "Send a photo or use /status.")
+            self._send_message(chat_id, "Send a photo or use /status (or /s).")
 
     def _handle_text(self, text, chat_id, message_id):
         text = text.strip()
@@ -448,7 +448,7 @@ class TelegramBotListener:
 
         if text.lower() in {"/start", "/help"}:
             self._send_help(chat_id)
-        elif text.lower() == "/status":
+        elif text.lower() in {"/status", "/s"}:
             self._send_status(chat_id)
         elif text.lower().startswith("/load"):
             parts = text.split(maxsplit=2)
@@ -640,10 +640,52 @@ class TelegramBotListener:
         webui = self._webui_url()
         if current_path and os.path.exists(current_path):
             caption = "Current display"
+            now = self.refresh_task._get_current_datetime() if hasattr(self.refresh_task, "_get_current_datetime") else datetime.utcnow()
             try:
                 refresh_info = self.device_config.get_refresh_info()
             except Exception:
                 refresh_info = None
+
+            def _fmt_dt(dt: datetime) -> str:
+                try:
+                    return dt.strftime("%b %d %I:%M %p").replace(" 0", " ")
+                except Exception:
+                    return dt.isoformat()
+
+            last_refresh_line = ""
+            next_refresh_line = ""
+            try:
+                refresh_time = getattr(refresh_info, "refresh_time", None)
+                if refresh_time:
+                    last_dt = datetime.fromisoformat(str(refresh_time))
+                    if last_dt.tzinfo is None and hasattr(now, "tzinfo") and now.tzinfo is not None:
+                        last_dt = last_dt.replace(tzinfo=now.tzinfo)
+                    delta = now - last_dt
+                    secs = max(0, int(delta.total_seconds()))
+                    if secs < 120:
+                        ago = "just now"
+                    elif secs < 3600:
+                        ago = f"{secs // 60}m ago"
+                    elif secs < 86400:
+                        ago = f"{secs // 3600}h ago"
+                    else:
+                        ago = f"{secs // 86400}d ago"
+                    last_refresh_line = f"Last refresh: {_fmt_dt(last_dt)} ({ago})"
+
+                    cycle = int(self.device_config.get_config("plugin_cycle_interval_seconds", default=0) or 0)
+                    if cycle > 0:
+                        next_dt = last_dt + timedelta(seconds=cycle)
+                        remaining = max(0, int((next_dt - now).total_seconds()))
+                        if remaining < 60:
+                            rem = f"{remaining}s"
+                        elif remaining < 3600:
+                            rem = f"{remaining // 60}m"
+                        else:
+                            rem = f"{remaining // 3600}h"
+                        next_refresh_line = f"Next refresh: {_fmt_dt(next_dt)} (in {rem})"
+            except Exception:
+                last_refresh_line = ""
+                next_refresh_line = ""
 
             try:
                 if getattr(refresh_info, "plugin_id", None) == "daily_cat_weather":
@@ -684,7 +726,13 @@ class TelegramBotListener:
                     caption = f"🗒️ Card 1 (card={card_id} — {label})"
             except Exception:
                 caption = "Current display"
-            caption = f"{caption}\nWeb UI: {webui}"
+            lines = [caption]
+            if last_refresh_line:
+                lines.append(last_refresh_line)
+            if next_refresh_line:
+                lines.append(next_refresh_line)
+            lines.append(f"Web UI: {webui}")
+            caption = "\n".join(lines)
             self._send_photo_path(chat_id, current_path, caption=caption)
             return
 
@@ -2510,7 +2558,7 @@ class TelegramBotListener:
             "- Send a photo to set the display.",
             "- /ai a short prompt — generate an AI image (then tap Generate).",
             "- /txt a short note — generate a note (pick a background, then Render).",
-            "- /status — send the current display preview.",
+            "- /status (/s) — send the current display preview.",
             "- /cat — regenerate today’s Daily Theme background (if configured).",
             "- /cat <prompt> — set a custom scene for the rest of today (auto-enhanced).",
             "- /cat clear — go back to the auto scene generator.",
