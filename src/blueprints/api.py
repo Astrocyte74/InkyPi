@@ -4,6 +4,7 @@ import base64
 import logging
 import os
 from datetime import datetime, timedelta
+from contextlib import nullcontext
 
 from flask import Blueprint, jsonify, request, current_app
 
@@ -71,29 +72,8 @@ def _display_title(plugin_id: str | None, plugin_instance: str | None) -> str:
     return f"{base} ({inst})" if inst else base
 
 
-@api_bp.route("/status", methods=["GET"])
-def status():
-    """
-    iOS Shortcuts-friendly status endpoint.
-
-    Returns JSON including a base64-encoded PNG of the current display (optional).
-    """
-    if not _require_token():
-        return jsonify({"error": "Unauthorized"}), 401
-
+def _build_status_payload(*, now: datetime, include_image: bool, include_image_base64: bool) -> dict:
     device_config = current_app.config["DEVICE_CONFIG"]
-
-    include_image = str(request.args.get("image", "1")).strip().lower() not in {"0", "false", "no"}
-    include_image_base64 = str(request.args.get("format", "base64")).strip().lower() in {"base64", "b64", "json"}
-
-    now = None
-    try:
-        refresh_task = current_app.config.get("REFRESH_TASK")
-        now = refresh_task._get_current_datetime() if refresh_task and hasattr(refresh_task, "_get_current_datetime") else None
-    except Exception:
-        now = None
-    if now is None:
-        now = datetime.utcnow()
 
     refresh_info = None
     try:
@@ -173,4 +153,92 @@ def status():
             "base64_png": image_b64,
         },
     }
+    return payload
+
+
+@api_bp.route("/status", methods=["GET"])
+def status():
+    """
+    iOS Shortcuts-friendly status endpoint.
+
+    Returns JSON including a base64-encoded PNG of the current display (optional).
+    """
+    if not _require_token():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    include_image = str(request.args.get("image", "1")).strip().lower() not in {"0", "false", "no"}
+    include_image_base64 = str(request.args.get("format", "base64")).strip().lower() in {"base64", "b64", "json"}
+
+    now = None
+    try:
+        refresh_task = current_app.config.get("REFRESH_TASK")
+        now = refresh_task._get_current_datetime() if refresh_task and hasattr(refresh_task, "_get_current_datetime") else None
+    except Exception:
+        now = None
+    if now is None:
+        now = datetime.utcnow()
+
+    return jsonify(_build_status_payload(now=now, include_image=include_image, include_image_base64=include_image_base64))
+
+
+@api_bp.route("/next", methods=["GET", "POST"])
+def next_item():
+    """Advance the display to the next playlist item (iOS Shortcuts-friendly)."""
+    if not _require_token():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    include_image = str(request.args.get("image", "1")).strip().lower() not in {"0", "false", "no"}
+    include_image_base64 = str(request.args.get("format", "base64")).strip().lower() in {"base64", "b64", "json"}
+    force_refresh = str(request.args.get("force", "0")).strip().lower() in {"1", "true", "yes"}
+
+    device_config = current_app.config["DEVICE_CONFIG"]
+    display_manager = current_app.config["DISPLAY_MANAGER"]
+    refresh_task = current_app.config.get("REFRESH_TASK")
+
+    now = None
+    try:
+        now = refresh_task._get_current_datetime() if refresh_task and hasattr(refresh_task, "_get_current_datetime") else None
+    except Exception:
+        now = None
+    if now is None:
+        now = datetime.utcnow()
+
+    playlist_manager = device_config.get_playlist_manager()
+    playlist = playlist_manager.determine_active_playlist(now)
+    if not playlist or not playlist.plugins:
+        return jsonify({"error": "No active playlist with plugins."}), 400
+
+    lock = getattr(refresh_task, "lock", None)
+    ctx = lock if lock is not None else nullcontext()
+
+    from plugins.plugin_registry import get_plugin_instance
+    from refresh_task import PlaylistRefresh
+    from utils.image_utils import compute_image_hash
+    from model import RefreshInfo
+
+    with ctx:
+        plugin_instance = playlist.get_next_plugin()
+        plugin_config = device_config.get_plugin(plugin_instance.plugin_id)
+        if not plugin_config:
+            return jsonify({"error": f"Plugin '{plugin_instance.plugin_id}' not found."}), 404
+
+        plugin = get_plugin_instance(plugin_config)
+        image = PlaylistRefresh(playlist, plugin_instance, force=force_refresh).execute(plugin, device_config, now)
+
+        display_manager.display_image(image, image_settings=plugin_config.get("image_settings", []))
+        image_hash = compute_image_hash(image)
+
+        refresh_info = RefreshInfo(
+            refresh_type="API Next",
+            plugin_id=plugin_instance.plugin_id,
+            refresh_time=now.isoformat(),
+            image_hash=image_hash,
+            playlist=playlist.name,
+            plugin_instance=plugin_instance.name,
+        )
+        device_config.refresh_info = refresh_info
+        device_config.write_config()
+
+    payload = _build_status_payload(now=now, include_image=include_image, include_image_base64=include_image_base64)
+    payload["action"] = {"type": "next", "playlist": playlist.name}
     return jsonify(payload)
