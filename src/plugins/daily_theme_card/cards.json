@@ -10,6 +10,10 @@
       "source": "jane_austen.json"
     },
     {
+      "id": "French_word_of_day",
+      "source": "French_word_of_day.json"
+    },
+    {
       "id": "word_of_day",
       "source": "word_of_day.json"
     },

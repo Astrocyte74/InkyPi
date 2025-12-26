@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "id": "word_of_day",
+  "label": "Word of the Day (Local)",
+  "type": "word",
+  "items": [
+    {
+      "text": "une viennoiserie",
+      "attribution": "a category of baked goods like croissants and pain au chocolat"
+    },
+    {
+      "text": "un pain au chocolat",
+      "attribution": "chocolate-filled laminated pastry (never called a croissant in Paris)"
+    },
+    {
+      "text": "bien cuit",
+      "attribution": "well baked; often used to request darker bread or toast"
+    },
+    {
+      "text": "la formule",
+      "attribution": "a fixed-price meal or combo, common in cafés"
+    },
+    {
+      "text": "ça sera tout",
+      "attribution": "that will be all; used to finish an order naturally"
+    },
+    {
+      "text": "règlement en espèces ou carte",
+      "attribution": "payment in cash or card"
+    },
+    {
+      "text": "vous désirez autre chose",
+      "attribution": "would you like anything else"
+    }
+    ,
+    {
+      "text": "une tartelette",
+      "attribution": "a small individual tart, often fruit- or custard-filled"
+    },
+    {
+      "text": "une part",
+      "attribution": "a slice or portion, as in une part de tarte"
+    },
+    {
+      "text": "fait maison",
+      "attribution": "made in-house; homemade (a quality marker on menus)"
+    }
+  ]
+}

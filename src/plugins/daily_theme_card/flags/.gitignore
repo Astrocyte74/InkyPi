@@ -1,0 +1,10 @@
+# Downloaded assets (can be large / license-sensitive)
+svg/
+png/
+
+# macOS metadata files (can appear inside downloaded folders)
+._*
+.DS_Store
+
+# Generated manifest
+flags.json

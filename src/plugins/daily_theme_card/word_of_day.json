@@ -6,15 +6,75 @@
   "items": [
     {
       "text": "serendipity",
-      "attribution": "finding something good without looking for it"
+      "attribution": "the occurrence of pleasant discoveries by chance while seeking something else"
     },
     {
       "text": "sonder",
-      "attribution": "the realization that everyone has a story"
+      "attribution": "the realization that every passerby lives a life as vivid and complex as your own"
     },
     {
       "text": "resilience",
-      "attribution": "recovering quickly from difficulty"
+      "attribution": "the capacity to recover, adapt, and grow stronger after adversity"
+    },
+    {
+      "text": "limerence",
+      "attribution": "an intense, involuntary state of romantic infatuation marked by longing and idealization"
+    },
+    {
+      "text": "petrichor",
+      "attribution": "the earthy scent produced when rain falls on dry ground"
+    },
+    {
+      "text": "ephemeral",
+      "attribution": "lasting for a very short time; fleeting by nature"
+    },
+    {
+      "text": "equanimity",
+      "attribution": "calm mental balance and composure, especially in difficult situations"
+    },
+    {
+      "text": "sonderweg",
+      "attribution": "the belief that a group or nation follows a unique or exceptional historical path"
+    },
+    {
+      "text": "melancholy",
+      "attribution": "a gentle, reflective sadness without a clear cause"
+    },
+    {
+      "text": "lucidity",
+      "attribution": "clarity of thought or expression; mental sharpness"
+    },
+    {
+      "text": "ineffable",
+      "attribution": "too great or profound to be expressed in words"
+    },
+    {
+      "text": "fortitude",
+      "attribution": "strength of mind that enables endurance through difficulty or pain"
+    },
+    {
+      "text": "nostalgia",
+      "attribution": "a sentimental longing for the past, often idealized"
+    },
+    {
+      "text": "transience",
+      "attribution": "the state of lasting only temporarily; impermanence"
+    },
+    {
+      "text": "magnanimity",
+      "attribution": "generosity or forgiveness, especially toward a rival or offender"
+    },
+    {
+      "text": "introspection",
+      "attribution": "the examination of one’s own thoughts, feelings, and motives"
+    },
+    {
+      "text": "awe",
+      "attribution": "a feeling of reverential wonder mixed with fear or admiration"
+    },
+    {
+      "text": "stillness",
+      "attribution": "a state of quiet calm, free from movement or disturbance"
     }
   ]
 }

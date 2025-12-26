@@ -17,6 +17,20 @@ The catalog that wires these up is:
 
 - `src/plugins/daily_theme_card/cards.json`
 
+### Filtering long quotes
+
+If your left panel can’t show long quotes at a readable font size (or a top banner overlaps the first lines), you can pre-filter quote JSON files with:
+
+```bash
+python src/plugins/daily_theme_card/filter_quotes_to_fit.py src/plugins/daily_theme_card/inspiration.json \
+  --panel-width 560 --panel-height 480 \
+  --min-body-font-size 18 \
+  --reserve-top 70 \
+  --write
+```
+
+This removes items that won’t fit and annotates the remaining items with a small `layout` object (useful for debugging).
+
 ### File formats
 
 #### Leaf quote/word JSON
@@ -58,4 +72,3 @@ Example:
 Some sources may be device-local (example: family dates) and referenced by absolute path in `cards.json`.
 
 If you want to edit those from your Mac, put them under `/home/mcdarby/...` (so they’re writable as your user) and point the relevant `..._PATH` env var to that file.
-
