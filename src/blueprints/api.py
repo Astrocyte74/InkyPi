@@ -5,6 +5,8 @@ import logging
 import os
 from datetime import datetime, timedelta
 from contextlib import nullcontext
+from datetime import time as dtime
+import re
 
 from flask import Blueprint, jsonify, request, current_app
 
@@ -29,6 +31,59 @@ def _fmt_dt(dt: datetime) -> str:
         return dt.strftime("%b %d %I:%M %p").replace(" 0", " ")
     except Exception:
         return dt.isoformat()
+
+
+def _parse_hhmm(value: str) -> dtime:
+    value = (value or "").strip()
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})", value)
+    if not match:
+        return dtime(4, 0)
+    hour = max(0, min(23, int(match.group(1))))
+    minute = max(0, min(59, int(match.group(2))))
+    return dtime(hour, minute)
+
+
+def _day_key(now: datetime, refresh_time: dtime) -> str:
+    if now.timetz().replace(tzinfo=None) < refresh_time:
+        day = (now - timedelta(days=1)).date()
+    else:
+        day = now.date()
+    return day.isoformat()
+
+
+def _sanitize_cache_id(value: str) -> str:
+    value = (value or "").strip().lower()
+    value = re.sub(r"[^a-z0-9_-]+", "-", value)
+    value = re.sub(r"-{2,}", "-", value).strip("-")
+    return value or "default"
+
+
+def _clear_daily_cat_cache(device_config, plugin_instance, now: datetime):
+    settings = plugin_instance.settings or {}
+    cache_id = _sanitize_cache_id(settings.get("cacheId") or "default")
+    daily_refresh_time = _parse_hhmm(settings.get("dailyRefreshTime") or "04:00")
+    day = _day_key(now, daily_refresh_time)
+
+    cache_dir = os.path.join(device_config.BASE_DIR, "..", "mock_display_output", "daily_cat_weather")
+    os.makedirs(cache_dir, exist_ok=True)
+
+    targets = [
+        os.path.join(cache_dir, f"bg_{cache_id}_{day}.png"),
+        os.path.join(cache_dir, f"bg_{cache_id}_{day}.json"),
+        os.path.join(cache_dir, f"latest_bg_{cache_id}.png"),
+    ]
+
+    removed = []
+    for path in targets:
+        if not os.path.exists(path):
+            continue
+        try:
+            os.remove(path)
+            removed.append(os.path.basename(path))
+        except Exception:
+            logger.exception("Failed to remove Daily Cat cache file: %s", path)
+
+    return cache_id, day, removed
 
 
 def _human_ago(seconds: int) -> str:
@@ -275,5 +330,108 @@ def next_item():
         "playlist": playlist.name,
         "force_mode": force_mode,
         "forced_refresh": bool(force_refresh),
+    }
+    return jsonify(payload)
+
+
+@api_bp.route("/cat/reroll", methods=["GET", "POST"])
+def cat_reroll():
+    """Force a new Daily Cat background and make it the "today" image."""
+    if not _require_token():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    include_image = str(request.args.get("image", "1")).strip().lower() not in {"0", "false", "no"}
+    include_image_base64 = str(request.args.get("format", "base64")).strip().lower() in {"base64", "b64", "json"}
+    requested_instance = (request.args.get("instance") or "").strip()
+
+    device_config = current_app.config["DEVICE_CONFIG"]
+    display_manager = current_app.config["DISPLAY_MANAGER"]
+    refresh_task = current_app.config.get("REFRESH_TASK")
+
+    now = None
+    try:
+        now = refresh_task._get_current_datetime() if refresh_task and hasattr(refresh_task, "_get_current_datetime") else None
+    except Exception:
+        now = None
+    if now is None:
+        now = datetime.utcnow()
+
+    playlist_manager = device_config.get_playlist_manager()
+    playlist = playlist_manager.determine_active_playlist(now)
+    if not playlist or not playlist.plugins:
+        return jsonify({"error": "No active playlist with plugins."}), 400
+
+    plugin_instance = None
+    if requested_instance:
+        plugin_instance = playlist.find_plugin("daily_cat_weather", requested_instance)
+
+    if not plugin_instance:
+        try:
+            refresh_info = device_config.get_refresh_info()
+            if refresh_info and getattr(refresh_info, "plugin_id", None) == "daily_cat_weather":
+                current_name = getattr(refresh_info, "plugin_instance", None)
+                if current_name:
+                    plugin_instance = playlist.find_plugin("daily_cat_weather", current_name)
+        except Exception:
+            plugin_instance = None
+
+    if not plugin_instance:
+        plugin_instance = next((p for p in playlist.plugins if p.plugin_id == "daily_cat_weather"), None)
+
+    if not plugin_instance:
+        return jsonify({"error": "Daily Cat Weather isn't enabled in the active playlist."}), 400
+
+    lock = getattr(refresh_task, "lock", None)
+    ctx = lock if lock is not None else nullcontext()
+
+    from plugins.plugin_registry import get_plugin_instance
+    from refresh_task import PlaylistRefresh
+    from utils.image_utils import compute_image_hash
+    from model import RefreshInfo
+
+    with ctx:
+        plugin_instance.settings = plugin_instance.settings or {}
+        try:
+            current_nonce = int(plugin_instance.settings.get("rerollNonce") or 0)
+        except (TypeError, ValueError):
+            current_nonce = 0
+        plugin_instance.settings["rerollNonce"] = current_nonce + 1
+
+        cache_id, day, removed = _clear_daily_cat_cache(device_config, plugin_instance, now)
+        try:
+            device_config.write_config()
+        except Exception:
+            logger.exception("Failed to persist Daily Cat settings.")
+
+        plugin_config = device_config.get_plugin(plugin_instance.plugin_id)
+        if not plugin_config:
+            return jsonify({"error": "Daily Cat Weather plugin config not found."}), 404
+
+        plugin = get_plugin_instance(plugin_config)
+        image = PlaylistRefresh(playlist, plugin_instance, force=True).execute(plugin, device_config, now)
+
+        display_manager.display_image(image, image_settings=plugin_config.get("image_settings", []))
+        image_hash = compute_image_hash(image)
+
+        refresh_info = RefreshInfo(
+            refresh_type="API Cat Reroll",
+            plugin_id=plugin_instance.plugin_id,
+            refresh_time=now.isoformat(),
+            image_hash=image_hash,
+            playlist=playlist.name,
+            plugin_instance=plugin_instance.name,
+        )
+        device_config.refresh_info = refresh_info
+        device_config.write_config()
+
+    payload = _build_status_payload(now=now, include_image=include_image, include_image_base64=include_image_base64)
+    payload["action"] = {
+        "type": "cat_reroll",
+        "playlist": playlist.name,
+        "plugin_instance": plugin_instance.name,
+        "cache_id": cache_id,
+        "day": day,
+        "reroll_nonce": plugin_instance.settings.get("rerollNonce"),
+        "removed_cache_files": removed,
     }
     return jsonify(payload)

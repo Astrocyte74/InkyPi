@@ -74,3 +74,16 @@ Query params:
 
 - `image=0|1` (default `1`)
 - `force=all|none` (default: smart when omitted)
+
+## `POST /api/cat/reroll`
+
+For Daily Cat Weather specifically: guarantees a *new* illustration background for “today” by bumping `rerollNonce` and clearing the Daily Cat background cache before rendering.
+
+Common usage:
+
+- `POST /api/cat/reroll?image=0`
+
+Notes:
+
+- This may trigger an AI image generation API call.
+- The new image becomes the “today” image and will be reused for the rest of the day unless rerolled again.
