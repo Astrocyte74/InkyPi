@@ -83,22 +83,46 @@
 </div>
 
 <div class="form-group">
-    <label for="cardRoot" class="form-label">Daily Card:</label>
-    <select id="cardRoot" class="form-input">
-        {% if card_leaf_choices %}
-            {% for card in card_leaf_choices %}
-                <option value="{{ card.id }}">{{ card.label }}</option>
-            {% endfor %}
-        {% else %}
-            <option value="inspiration">Inspirational Quote</option>
-        {% endif %}
+    <label class="form-label">Daily Cards:</label>
+    <div style="font-size: 0.9em; opacity: 0.8; margin-bottom: 10px;">
+        Select one or more card sources. If you select multiple, you can rotate them with the Rotation setting below.
+    </div>
+    <div id="cardChoices" style="display: grid; gap: 10px;">
+        <div style="display: grid; gap: 6px;">
+            {% if card_leaf_choices %}
+                {% for card in card_leaf_choices %}
+                    <label style="display: flex; gap: 10px; align-items: center;">
+                        <input type="checkbox" class="card-choice" value="{{ card.id }}">
+                        <span>{{ card.label }}</span>
+                    </label>
+                {% endfor %}
+            {% else %}
+                <label style="display: flex; gap: 10px; align-items: center;">
+                    <input type="checkbox" class="card-choice" value="inspiration" checked>
+                    <span>Inspirational Quote</span>
+                </label>
+            {% endif %}
+        </div>
         {% if card_groups %}
             {% for group in card_groups %}
-                <option value="group:{{ group.id }}">{{ group.label }}</option>
+                <details style="border: 1px solid rgba(0,0,0,0.12); border-radius: 8px; padding: 10px;">
+                    <summary style="cursor: pointer; font-weight: 600;">
+                        {{ group.label }}
+                    </summary>
+                    <div style="display: grid; gap: 6px; margin-top: 10px;">
+                        {% for child in group.children %}
+                            <label style="display: flex; gap: 10px; align-items: center;">
+                                <input type="checkbox" class="card-choice" value="{{ child.id }}">
+                                <span>{{ child.label }}</span>
+                            </label>
+                        {% endfor %}
+                    </div>
+                </details>
             {% endfor %}
         {% endif %}
-    </select>
+    </div>
     <input type="hidden" id="cardId" name="cardId" />
+    <input type="hidden" id="cardIds" name="cardIds" />
     <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
         Card sources are defined in <code>src/plugins/daily_theme_card/cards.json</code> (which references other JSON files).
     </div>
@@ -107,9 +131,24 @@
     </div>
 </div>
 
-<div class="form-group" id="cardGroupContainer" style="display: none;">
-    <label for="cardGroupId" class="form-label">Category:</label>
-    <select id="cardGroupId" class="form-input"></select>
+<div class="form-group">
+    <label for="rotationMode" class="form-label">Rotation:</label>
+    <select id="rotationMode" name="rotationMode" class="form-input">
+        <option value="daily">Pick one per day</option>
+        <option value="sequential">Rotate sequentially</option>
+        <option value="random">Rotate randomly</option>
+    </select>
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Rotation is applied only when this plugin instance refreshes (configure the refresh interval in the playlist).
+    </div>
+</div>
+
+<div class="form-group" id="rotationPeriodContainer">
+    <label for="rotationPeriodMinutes" class="form-label">Rotation Period (minutes):</label>
+    <input type="number" id="rotationPeriodMinutes" name="rotationPeriodMinutes" class="form-input" min="1" max="1440" step="5" value="60">
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Used for sequential/random rotation. For “Pick one per day”, this value is ignored.
+    </div>
 </div>
 
 <div id="mapModal" class="modal">
@@ -287,93 +326,69 @@
             renderSavedLocations();
         });
 
-        const CARD_GROUPS = {{ (card_groups or []) | tojson }};
-
-        const $cardRoot = document.getElementById('cardRoot');
         const $cardId = document.getElementById('cardId');
-        const $cardGroupContainer = document.getElementById('cardGroupContainer');
-        const $cardGroupId = document.getElementById('cardGroupId');
+        const $cardIds = document.getElementById('cardIds');
+        const $rotationMode = document.getElementById('rotationMode');
+        const $rotationPeriodMinutes = document.getElementById('rotationPeriodMinutes');
+        const $rotationPeriodContainer = document.getElementById('rotationPeriodContainer');
 
-        function findGroupById(groupId) {
-            return (CARD_GROUPS || []).find(g => (g.id || '') === groupId);
+        function normalizeCardId(value) {
+            return (value || '').toString().trim().toLowerCase().replace(/[^a-z0-9_]+/g, '');
         }
 
-        function findGroupForCardId(cardId) {
-            const target = (cardId || '').toString().toLowerCase();
-            for (const group of (CARD_GROUPS || [])) {
-                for (const child of (group.children || [])) {
-                    if ((child.id || '').toString().toLowerCase() === target) {
-                        return group;
-                    }
-                }
+        function parseCardIds(value) {
+            if (Array.isArray(value)) {
+                return value.map(normalizeCardId).filter(Boolean);
             }
-            return null;
+            const raw = (value || '').toString().trim();
+            if (!raw) return [];
+            return raw.split(/[,\n\r\t ]+/).map(normalizeCardId).filter(Boolean);
         }
 
-        function renderGroupChildren(group, selectedCardId) {
-            const selected = (selectedCardId || '').toString().toLowerCase();
-            $cardGroupId.innerHTML = '';
-
-            const children = (group && group.children) ? group.children : [];
-            children.forEach(child => {
-                const opt = document.createElement('option');
-                opt.value = (child.id || '').toString().toLowerCase();
-                opt.textContent = child.label || child.id;
-                $cardGroupId.appendChild(opt);
+        function uniqueIds(ids) {
+            const seen = new Set();
+            const out = [];
+            (ids || []).forEach(id => {
+                if (!id || seen.has(id)) return;
+                seen.add(id);
+                out.push(id);
             });
-
-            if (children.length) {
-                $cardGroupId.value = selected && children.some(c => (c.id || '').toLowerCase() === selected)
-                    ? selected
-                    : (children[0].id || '').toLowerCase();
-            }
+            return out;
         }
 
-        function showGroupPicker(groupId, selectedCardId) {
-            const group = findGroupById(groupId);
-            if (!group) {
-                $cardGroupContainer.style.display = 'none';
-                return;
-            }
-            renderGroupChildren(group, selectedCardId);
-            $cardGroupContainer.style.display = '';
-            $cardId.value = ($cardGroupId.value || '').toString().toLowerCase();
+        function selectedCardIdsFromUI() {
+            const boxes = Array.from(document.querySelectorAll('.card-choice'));
+            return uniqueIds(boxes.filter(b => b.checked).map(b => normalizeCardId(b.value)));
         }
 
-        function hideGroupPicker() {
-            $cardGroupContainer.style.display = 'none';
-            $cardGroupId.innerHTML = '';
+        function applySelection(ids) {
+            const boxes = Array.from(document.querySelectorAll('.card-choice'));
+            const set = new Set(ids);
+            boxes.forEach(b => {
+                const id = normalizeCardId(b.value);
+                b.checked = set.has(id);
+            });
+            const finalIds = uniqueIds(ids);
+            if (!finalIds.length) {
+                finalIds.push('inspiration');
+            }
+            $cardIds.value = finalIds.join(',');
+            $cardId.value = finalIds[0];
         }
 
-        function syncFromCardId() {
-            const current = ($cardId.value || '').toString().toLowerCase() || 'inspiration';
-            const group = findGroupForCardId(current);
-            if (group) {
-                $cardRoot.value = `group:${group.id}`;
-                showGroupPicker(group.id, current);
-                return;
-            }
-            hideGroupPicker();
-            const hasLeaf = Array.from($cardRoot.options || []).some(opt => (opt.value || '').toString().toLowerCase() === current);
-            const fallback = hasLeaf ? current : 'inspiration';
-            $cardRoot.value = fallback;
-            $cardId.value = fallback;
+        function syncHiddenFromUI() {
+            applySelection(selectedCardIdsFromUI());
         }
 
-        $cardRoot.addEventListener('change', () => {
-            const value = ($cardRoot.value || '').toString();
-            if (value.startsWith('group:')) {
-                const groupId = value.slice('group:'.length);
-                showGroupPicker(groupId, $cardId.value);
-                return;
-            }
-            hideGroupPicker();
-            $cardId.value = value.toLowerCase();
+        function updateRotationVisibility() {
+            const mode = ($rotationMode.value || 'daily').toString().toLowerCase();
+            $rotationPeriodContainer.style.display = (mode === 'daily') ? 'none' : '';
+        }
+
+        document.querySelectorAll('.card-choice').forEach(box => {
+            box.addEventListener('change', () => syncHiddenFromUI());
         });
-
-        $cardGroupId.addEventListener('change', () => {
-            $cardId.value = ($cardGroupId.value || '').toString().toLowerCase();
-        });
+        $rotationMode.addEventListener('change', () => updateRotationVisibility());
 
         if (loadPluginSettings) {
             document.getElementById('latitude').value = pluginSettings.latitude || '';
@@ -384,7 +399,11 @@
             document.getElementById('forecastDays').value = pluginSettings.forecastDays || '3';
             document.getElementById('backgroundMode').value = (pluginSettings.backgroundMode || 'illustration_blur').toLowerCase();
             document.getElementById('illustrationCacheId').value = pluginSettings.illustrationCacheId || '';
-            $cardId.value = (pluginSettings.cardId || 'inspiration').toLowerCase();
+            const ids = parseCardIds(pluginSettings.cardIds);
+            const fallback = normalizeCardId(pluginSettings.cardId || 'inspiration') || 'inspiration';
+            applySelection(ids.length ? ids : [fallback]);
+            $rotationMode.value = (pluginSettings.rotationMode || 'daily').toString().toLowerCase();
+            $rotationPeriodMinutes.value = parseInt((pluginSettings.rotationPeriodMinutes || '60').toString(), 10) || 60;
         } else {
             document.getElementById('locationLabel').value = '';
             document.getElementById('units').value = 'metric';
@@ -392,10 +411,11 @@
             document.getElementById('forecastDays').value = '3';
             document.getElementById('backgroundMode').value = 'illustration_blur';
             document.getElementById('illustrationCacheId').value = '';
-            $cardId.value = 'inspiration';
+            applySelection(['inspiration']);
+            $rotationMode.value = 'daily';
+            $rotationPeriodMinutes.value = 60;
         }
-
-        syncFromCardId();
+        updateRotationVisibility();
 
         renderSavedLocations();
 

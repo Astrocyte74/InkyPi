@@ -947,8 +947,22 @@ class TelegramBotListener:
             except (TypeError, ValueError):
                 slot = 1
             action = parts[2] if len(parts) > 2 else None
-            if action == "set" and len(parts) >= 4:
-                self._set_daily_card(chat_id, slot=slot, raw_card=parts[3], menu_message_id=message_id, include_back=True)
+            arg = parts[3] if len(parts) > 3 else None
+            if action == "toggle" and arg:
+                self._toggle_daily_card_selection(chat_id, slot=slot, card_id=arg, menu_message_id=message_id)
+                self._answer_callback(callback_query["id"], text="Updated.")
+            elif action == "mode" and arg:
+                self._set_daily_card_rotation(chat_id, slot=slot, mode=arg, menu_message_id=message_id)
+                self._answer_callback(callback_query["id"], text="Mode updated.")
+            elif action == "period" and arg:
+                self._set_daily_card_rotation(chat_id, slot=slot, period_minutes=arg, menu_message_id=message_id)
+                self._answer_callback(callback_query["id"], text="Period updated.")
+            elif action == "refresh":
+                self._refresh_daily_card(chat_id, slot=slot, menu_message_id=message_id)
+                self._answer_callback(callback_query["id"], text="Refreshing…")
+            elif action == "set" and arg:
+                # Backward compatibility: treat as single selection set
+                self._set_daily_card(chat_id, slot=slot, raw_card=arg, menu_message_id=message_id, include_back=True)
                 self._answer_callback(callback_query["id"], text="Setting card…")
             else:
                 self._answer_callback(callback_query["id"])
@@ -2992,7 +3006,25 @@ class TelegramBotListener:
             try:
                 _, card_instance = self._find_daily_theme_card_plugin_instance(current_dt, slot=slot)
                 if card_instance:
-                    card_id = ((card_instance.settings or {}).get("cardId") or "inspiration").strip().lower()
+                    settings = card_instance.settings or {}
+                    # Determine active card + selection count (supports multi-select).
+                    card_id = (settings.get("cardId") or "inspiration").strip().lower()
+                    try:
+                        from plugins.daily_theme_card.daily_theme_card import DailyThemeCard  # local import
+
+                        card_id, _, _ = DailyThemeCard.resolve_active_card(settings, self.device_config)
+                    except Exception:
+                        card_id = (settings.get("cardId") or "inspiration").strip().lower()
+
+                    raw_ids = settings.get("cardIds")
+                    selected_ids = []
+                    if isinstance(raw_ids, list):
+                        selected_ids = [str(x).strip().lower() for x in raw_ids if str(x).strip()]
+                    elif isinstance(raw_ids, str):
+                        selected_ids = [p.strip().lower() for p in re.split(r"[,\n\r\t ]+", raw_ids) if p.strip()]
+                    if not selected_ids:
+                        selected_ids = [card_id]
+                    selected_count = len({x for x in selected_ids if x})
                     bg_mode = ((card_instance.settings or {}).get("backgroundMode") or "illustration_blur").strip().lower()
                     bg_label = self._daily_card_bg_label(bg_mode)
                     presets = self._daily_card_presets()
@@ -3000,7 +3032,8 @@ class TelegramBotListener:
                     if card_id in self.DAILY_CARD_DISABLED_IDS:
                         line = f"Card {slot}: Family is handled by the banner • {bg_label}"
                     else:
-                        line = f"Card {slot}: {label} (`{card_id}`) • {bg_label}"
+                        extra = f" • {selected_count} selected" if selected_count > 1 else ""
+                        line = f"Card {slot}: {label} (`{card_id}`) • {bg_label}{extra}"
                 else:
                     line = f"Card {slot}: not configured"
                     missing_slots.append(slot)
@@ -3123,17 +3156,56 @@ class TelegramBotListener:
         presets = self._daily_card_presets()
         leaf_choices = self._daily_card_leaf_choices()
         groups = self._daily_card_groups()
-        actual_card = ((plugin_instance.settings or {}).get("cardId") or "inspiration").strip().lower()
-        if presets and actual_card not in presets:
-            actual_card = next(iter(presets.keys()), "inspiration")
+        settings = plugin_instance.settings or {}
+        raw_ids = settings.get("cardIds")
+        selected_ids = []
+        if isinstance(raw_ids, list):
+            selected_ids = [str(x).strip().lower() for x in raw_ids if str(x).strip()]
+        elif isinstance(raw_ids, str):
+            selected_ids = [p.strip().lower() for p in re.split(r"[,\n\r\t ]+", raw_ids) if p.strip()]
+        if not selected_ids:
+            selected_ids = [((settings.get("cardId") or "inspiration").strip().lower())]
+        # Deduplicate while preserving order
+        seen = set()
+        selected_ids = [cid for cid in selected_ids if not (cid in seen or seen.add(cid))]
+        if not selected_ids:
+            selected_ids = ["inspiration"]
 
-        selected_card = selected_card_id or actual_card
-        selected_card = (selected_card or "").strip().lower()
-        if presets and selected_card not in presets:
-            selected_card = actual_card
+        rotation_mode = (settings.get("rotationMode") or "daily").strip().lower()
+        if rotation_mode in {"seq", "sequence"}:
+            rotation_mode = "sequential"
+        if rotation_mode not in {"daily", "sequential", "random"}:
+            rotation_mode = "daily"
+        try:
+            rotation_period = int(str(settings.get("rotationPeriodMinutes") or "60").strip())
+        except Exception:
+            rotation_period = 60
+        rotation_period = max(1, min(1440, rotation_period))
 
-        actual_label = (presets.get(actual_card, {}).get("label") if presets else None) or actual_card
-        selected_label = (presets.get(selected_card, {}).get("label") if presets else None) or selected_card
+        active_card = selected_ids[0]
+        try:
+            from plugins.daily_theme_card.daily_theme_card import DailyThemeCard  # local import
+
+            active_card, _, _ = DailyThemeCard.resolve_active_card(settings, self.device_config)
+        except Exception:
+            active_card = selected_ids[0]
+
+        if presets and active_card not in presets:
+            active_card = next(iter(presets.keys()), selected_ids[0])
+
+        cursor = (selected_card_id or "").strip().lower() or active_card
+        if presets and cursor not in presets:
+            cursor = active_card
+
+        active_label = (presets.get(active_card, {}).get("label") if presets else None) or active_card
+
+        selected_labels = []
+        for cid in selected_ids:
+            label = (presets.get(cid, {}).get("label") if presets else None) or cid
+            selected_labels.append(label)
+        selected_summary = ", ".join(selected_labels)
+        if len(selected_summary) > 70:
+            selected_summary = selected_summary[:67].rstrip() + "…"
 
         group_id = (group_id or "").strip().lower()
         if group_id == "root":
@@ -3150,16 +3222,16 @@ class TelegramBotListener:
 
         lines = [
             f"Card {slot}",
-            f"Current: {actual_label} ({actual_card})",
+            f"Active: {active_label} (`{active_card}`)",
+            f"Selected: {selected_summary}",
+            f"Mode: {rotation_mode} | Period: {rotation_period}m",
         ]
-        if selected_card_id and selected_card != actual_card:
-            lines.append(f"Selected: {selected_label} ({selected_card})")
         if status_line:
             lines.extend(["", status_line])
         if group:
             lines.extend(["", f"{group.get('label') or group_id}", "", "Pick a category:"])
         else:
-            lines.extend(["", f"Pick a card (or run `/card{slot} <name>`):"])
+            lines.extend(["", f"Tap cards to toggle selection (or run `/card{slot} <name>`):"])
             for card in leaf_choices:
                 cid = (card.get("id") or "").strip().lower()
                 label = card.get("label") or cid
@@ -3177,8 +3249,8 @@ class TelegramBotListener:
             for child in group.get("children") or []:
                 cid = (child.get("id") or "").strip().lower()
                 label = child.get("label") or cid
-                text_btn = f"✅ {label}" if cid == selected_card else label
-                row.append({"text": text_btn, "callback_data": f"card|{slot}|set|{cid}"})
+                text_btn = f"✅ {label}" if cid in selected_ids else label
+                row.append({"text": text_btn, "callback_data": f"card|{slot}|toggle|{cid}"})
                 if len(row) == 2:
                     buttons.append(row)
                     row = []
@@ -3202,8 +3274,8 @@ class TelegramBotListener:
                 label = card.get("label") or cid
                 if not cid:
                     continue
-                text_btn = f"✅ {label}" if cid == selected_card else label
-                row.append({"text": text_btn, "callback_data": f"card|{slot}|set|{cid}"})
+                text_btn = f"✅ {label}" if cid in selected_ids else label
+                row.append({"text": text_btn, "callback_data": f"card|{slot}|toggle|{cid}"})
                 if len(row) == 2:
                     buttons.append(row)
                     row = []
@@ -3214,7 +3286,7 @@ class TelegramBotListener:
             try:
                 from plugins.daily_theme_card.daily_theme_card import DailyThemeCard  # local import
 
-                selected_group = DailyThemeCard._card_group_for_id(selected_card)  # pylint: disable=protected-access
+                selected_group = DailyThemeCard._card_group_for_id(cursor)  # pylint: disable=protected-access
             except Exception:
                 selected_group = ""
 
@@ -3233,6 +3305,26 @@ class TelegramBotListener:
                     ]
                 )
 
+            mode_order = ["daily", "sequential", "random"]
+            try:
+                mode_idx = mode_order.index(rotation_mode)
+            except ValueError:
+                mode_idx = 0
+            next_mode = mode_order[(mode_idx + 1) % len(mode_order)]
+            period_options = [15, 30, 60, 120, 240]
+            try:
+                pidx = period_options.index(rotation_period)
+            except ValueError:
+                pidx = 2
+            next_period = period_options[(pidx + 1) % len(period_options)]
+
+            buttons.append(
+                [
+                    {"text": f"🔁 Mode: {rotation_mode}", "callback_data": f"card|{slot}|mode|{next_mode}"},
+                    {"text": f"⏱ {rotation_period}m", "callback_data": f"card|{slot}|period|{next_period}"},
+                ]
+            )
+            buttons.append([{"text": "🔄 Refresh now", "callback_data": f"card|{slot}|refresh|now"}])
             buttons.append([{"text": "🖼 Background", "callback_data": f"daily|open|cardbg|{slot}"}])
 
             if include_back:
@@ -3313,6 +3405,7 @@ class TelegramBotListener:
 
             plugin_instance.settings = plugin_instance.settings or {}
             plugin_instance.settings["cardId"] = card_id
+            plugin_instance.settings["cardIds"] = card_id
 
             try:
                 self.device_config.write_config()
@@ -3345,6 +3438,143 @@ class TelegramBotListener:
             self._send_message(chat_id, f"Card {slot} update failed: {exc}")
         finally:
             self.pending_card_updates.discard(chat_id)
+
+    def _toggle_daily_card_selection(self, chat_id, *, slot=1, card_id="", menu_message_id=None, include_back=True):
+        try:
+            current_dt = (
+                self.refresh_task._get_current_datetime()
+                if hasattr(self.refresh_task, "_get_current_datetime")
+                else datetime.utcnow()
+            )
+            playlist, plugin_instance = self._find_daily_theme_card_plugin_instance(current_dt, slot=slot)
+            if not playlist or not plugin_instance:
+                self._send_message(chat_id, f"Card {slot} isn't enabled yet (add it to a playlist first).")
+                return
+
+            settings = plugin_instance.settings or {}
+            raw_ids = settings.get("cardIds")
+            ids = []
+            if isinstance(raw_ids, list):
+                ids = [str(x).strip().lower() for x in raw_ids if str(x).strip()]
+            elif isinstance(raw_ids, str):
+                ids = [p.strip().lower() for p in re.split(r"[,\n\r\t ]+", raw_ids) if p.strip()]
+            if not ids:
+                ids = [((settings.get("cardId") or "inspiration").strip().lower())]
+
+            cid = (card_id or "").strip().lower()
+            if not cid:
+                return
+
+            if cid in ids:
+                ids = [x for x in ids if x != cid]
+            else:
+                ids.append(cid)
+
+            # Never allow empty selection.
+            if not ids:
+                ids = ["inspiration"]
+
+            # Deduplicate while preserving order.
+            seen = set()
+            ids = [x for x in ids if not (x in seen or seen.add(x))]
+
+            settings["cardIds"] = ",".join(ids)
+            settings["cardId"] = ids[0]
+            plugin_instance.settings = settings
+            try:
+                self.device_config.write_config()
+            except Exception:
+                logger.exception("Failed to persist Card %s toggle selection.", slot)
+
+            self._send_daily_card_menu(
+                chat_id,
+                slot=slot,
+                message_id=menu_message_id,
+                include_back=include_back,
+                status_line="Selection updated.",
+            )
+        except Exception:
+            logger.exception("Failed to toggle Card %s selection.", slot)
+            self._send_message(chat_id, f"Card {slot} selection update failed.")
+
+    def _set_daily_card_rotation(self, chat_id, *, slot=1, mode=None, period_minutes=None, menu_message_id=None, include_back=True):
+        try:
+            current_dt = (
+                self.refresh_task._get_current_datetime()
+                if hasattr(self.refresh_task, "_get_current_datetime")
+                else datetime.utcnow()
+            )
+            playlist, plugin_instance = self._find_daily_theme_card_plugin_instance(current_dt, slot=slot)
+            if not playlist or not plugin_instance:
+                self._send_message(chat_id, f"Card {slot} isn't enabled yet (add it to a playlist first).")
+                return
+
+            settings = plugin_instance.settings or {}
+            if mode is not None:
+                m = str(mode).strip().lower()
+                if m in {"seq", "sequence"}:
+                    m = "sequential"
+                if m not in {"daily", "sequential", "random"}:
+                    m = "daily"
+                settings["rotationMode"] = m
+            if period_minutes is not None:
+                try:
+                    minutes = int(str(period_minutes).strip())
+                except Exception:
+                    minutes = 60
+                minutes = max(1, min(1440, minutes))
+                settings["rotationPeriodMinutes"] = str(minutes)
+
+            plugin_instance.settings = settings
+            try:
+                self.device_config.write_config()
+            except Exception:
+                logger.exception("Failed to persist Card %s rotation settings.", slot)
+
+            self._send_daily_card_menu(
+                chat_id,
+                slot=slot,
+                message_id=menu_message_id,
+                include_back=include_back,
+                status_line="Rotation updated.",
+            )
+        except Exception:
+            logger.exception("Failed to update Card %s rotation.", slot)
+            self._send_message(chat_id, f"Card {slot} rotation update failed.")
+
+    def _refresh_daily_card(self, chat_id, *, slot=1, menu_message_id=None, include_back=True):
+        try:
+            current_dt = (
+                self.refresh_task._get_current_datetime()
+                if hasattr(self.refresh_task, "_get_current_datetime")
+                else datetime.utcnow()
+            )
+            playlist, plugin_instance = self._find_daily_theme_card_plugin_instance(current_dt, slot=slot)
+            if not playlist or not plugin_instance:
+                self._send_message(chat_id, f"Card {slot} isn't enabled yet (add it to a playlist first).")
+                return
+
+            if not getattr(self.refresh_task, "running", False):
+                self._send_message(chat_id, "Refresh task is not running; restart `inkypi.service` and try again.")
+                return
+
+            self.refresh_task.manual_update(PlaylistRefresh(playlist, plugin_instance, force=True))
+
+            # Send the rendered card preview back.
+            plugin_image_path = os.path.join(self.device_config.plugin_image_dir, plugin_instance.get_image_path())
+            self._send_photo_path(chat_id, plugin_image_path, caption=f"🔄 Card {slot} refreshed")
+
+            if menu_message_id:
+                self._send_daily_card_menu(
+                    chat_id,
+                    slot=slot,
+                    message_id=menu_message_id,
+                    include_back=include_back,
+                    status_line="Refreshed ✅",
+                )
+        except Exception as exc:
+            logger.exception("Card %s refresh failed: %s", slot, exc)
+            self._send_message(chat_id, f"Card {slot} refresh failed: {exc}")
 
     @staticmethod
     def _normalize_theme_token(value):

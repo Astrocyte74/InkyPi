@@ -24,6 +24,8 @@ CARDS_PATH = resolve_path(os.path.join("plugins", "daily_theme_card", "cards.jso
 CARDS_DIR = os.path.dirname(CARDS_PATH)
 SIDEBAR_WIDTH_RATIO = 0.30
 DEFAULT_CARD_ID = "inspiration"
+DEFAULT_ROTATION_MODE = "daily"  # daily|sequential|random
+DEFAULT_ROTATION_PERIOD_MINUTES = 60
 
 
 class DailyThemeCard(BasePlugin):
@@ -57,18 +59,17 @@ class DailyThemeCard(BasePlugin):
         forecast_days = int(settings.get("forecastDays") or 3)
         forecast_days = max(1, min(5, forecast_days))
 
-        card_id = self._normalize_id(settings.get("cardId") or DEFAULT_CARD_ID) or DEFAULT_CARD_ID
+        active_card_id, day_key, bucket = self.resolve_active_card(settings, device_config)
+        cycle_key = day_key if bucket <= 0 else f"{day_key}|{bucket}"
 
         background_mode = (settings.get("backgroundMode") or "illustration_blur").strip().lower()
         if background_mode not in {"plain", "illustration", "illustration_blur"}:
             background_mode = "illustration_blur"
         illustration_cache_id = (settings.get("illustrationCacheId") or "").strip()
 
-        daily_refresh_time = self._parse_hhmm(settings.get("dailyRefreshTime") or "04:00")
         tz_str = device_config.get_config("timezone", default="UTC")
         tz = pytz.timezone(tz_str)
         now = datetime.now(tz)
-        day_key = self._day_key(now, daily_refresh_time)
 
         dimensions = device_config.get_resolution()
         if device_config.get_config("orientation") == "vertical":
@@ -96,8 +97,9 @@ class DailyThemeCard(BasePlugin):
                 blur=(background_mode == "illustration_blur"),
             )
         left = self._render_card_left_panel(
-            card_id=card_id,
+            card_id=active_card_id,
             day_key=day_key,
+            cycle_key=cycle_key,
             size=(image_width, height),
             base=base,
             draw_card_box=(background_mode != "plain"),
@@ -127,6 +129,87 @@ class DailyThemeCard(BasePlugin):
         )
         canvas.paste(panel, (image_width, 0))
         return canvas
+
+    @classmethod
+    def _parse_card_ids(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, list):
+            raw_items = value
+        else:
+            raw = str(value)
+            raw_items = re.split(r"[,\n\r\t ]+", raw)
+
+        seen = set()
+        ids = []
+        for item in raw_items:
+            cid = cls._normalize_id(item)
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            ids.append(cid)
+        return ids
+
+    @classmethod
+    def _rotation_mode(cls, settings):
+        mode = str((settings or {}).get("rotationMode") or DEFAULT_ROTATION_MODE).strip().lower()
+        if mode in {"seq", "sequence"}:
+            mode = "sequential"
+        if mode not in {"daily", "sequential", "random"}:
+            mode = DEFAULT_ROTATION_MODE
+        return mode
+
+    @classmethod
+    def _rotation_period_minutes(cls, settings):
+        raw = (settings or {}).get("rotationPeriodMinutes")
+        try:
+            minutes = int(str(raw).strip())
+        except Exception:
+            minutes = DEFAULT_ROTATION_PERIOD_MINUTES
+        return max(1, min(24 * 60, minutes))
+
+    @classmethod
+    def resolve_active_card(cls, settings, device_config, *, now=None):
+        settings = settings or {}
+        card_ids = cls._parse_card_ids(settings.get("cardIds"))
+        fallback = cls._normalize_id(settings.get("cardId") or DEFAULT_CARD_ID) or DEFAULT_CARD_ID
+        if not card_ids:
+            card_ids = [fallback]
+
+        tz_str = device_config.get_config("timezone", default="UTC")
+        tz = pytz.timezone(tz_str)
+        now = now or datetime.now(tz)
+
+        daily_refresh_time = cls._parse_hhmm(settings.get("dailyRefreshTime") or "04:00")
+        day_key = cls._day_key(now, daily_refresh_time)
+        mode = cls._rotation_mode(settings)
+
+        bucket = 0
+        if mode != "daily":
+            period = cls._rotation_period_minutes(settings)
+            try:
+                day = datetime.strptime(day_key, "%Y-%m-%d").date()
+                anchor = tz.localize(datetime.combine(day, daily_refresh_time))
+                minutes_since = max(0, int((now - anchor).total_seconds() // 60))
+                bucket = minutes_since // period
+            except Exception:
+                bucket = 0
+
+        if len(card_ids) == 1:
+            return card_ids[0], day_key, bucket
+
+        cards_key = ",".join(card_ids)
+        if mode == "daily":
+            seed = f"{day_key}|{cards_key}".encode("utf-8")
+            idx = int(hashlib.sha256(seed).hexdigest(), 16) % len(card_ids)
+            return card_ids[idx], day_key, 0
+        if mode == "sequential":
+            idx = bucket % len(card_ids)
+            return card_ids[idx], day_key, bucket
+
+        seed = f"{day_key}|{bucket}|{cards_key}".encode("utf-8")
+        idx = int(hashlib.sha256(seed).hexdigest(), 16) % len(card_ids)
+        return card_ids[idx], day_key, bucket
 
     @staticmethod
     def _daily_cat_cache_dir(device_config):
@@ -522,7 +605,7 @@ class DailyThemeCard(BasePlugin):
         candidates.sort(key=lambda t: t[0])
         return candidates[0][1]
 
-    def _render_card_left_panel(self, *, card_id, day_key, size, base=None, draw_card_box=False):
+    def _render_card_left_panel(self, *, card_id, day_key, cycle_key, size, base=None, draw_card_box=False):
         w, h = size
         if base is not None:
             img = base.copy().convert("RGB")
@@ -537,7 +620,7 @@ class DailyThemeCard(BasePlugin):
         if card_type == "family":
             pick = self._pick_family_item(items, day_key=day_key)
         else:
-            seed = f"{card_id}|{day_key}"
+            seed = f"{card_id}|{cycle_key or day_key}"
             if items:
                 idx = int(hashlib.sha256(seed.encode("utf-8")).hexdigest(), 16) % len(items)
                 pick = items[idx]
