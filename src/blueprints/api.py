@@ -41,6 +41,36 @@ def _human_ago(seconds: int) -> str:
     return f"{seconds // 86400}d ago"
 
 
+def _format_in(seconds: int | None) -> str:
+    if seconds is None:
+        return ""
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"in {seconds}s"
+    if seconds < 3600:
+        return f"in {seconds // 60}m {seconds % 60}s"
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    return f"in {hours}h {minutes}m"
+
+
+def _display_title(plugin_id: str | None, plugin_instance: str | None) -> str:
+    pid = (plugin_id or "").strip().lower()
+    if pid == "daily_cat_weather":
+        base = "🎨 Illustration"
+    elif pid == "daily_theme_card":
+        base = "🗒️ Daily Card"
+    elif pid == "world_flags":
+        base = "🏳️ World Flags"
+    elif pid:
+        base = pid
+    else:
+        base = "Status"
+
+    inst = (plugin_instance or "").strip()
+    return f"{base} ({inst})" if inst else base
+
+
 @api_bp.route("/status", methods=["GET"])
 def status():
     """
@@ -114,6 +144,17 @@ def status():
 
     payload = {
         "ok": True,
+        "status_text": "\n".join(
+            [
+                _display_title(plugin_id, plugin_instance),
+                f"Last refresh: {last_refresh_human} ({last_refresh_ago})" if last_refresh_human else "Last refresh: unknown",
+                (
+                    f"Next refresh: {_format_in(seconds_until_next)}"
+                    if seconds_until_next is not None
+                    else "Next refresh: unknown"
+                ),
+            ]
+        ),
         "plugin_id": plugin_id,
         "plugin_instance": plugin_instance,
         "last_refresh": {
@@ -133,4 +174,3 @@ def status():
         },
     }
     return jsonify(payload)
-
