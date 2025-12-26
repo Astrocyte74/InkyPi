@@ -458,11 +458,6 @@ class WorldFlags(BasePlugin):
         draw.text((ix0 + text_pad_x, y), title, font=title_font, fill=(0, 0, 0))
         y += int(title_font_size * 1.30)
 
-        # Divider line
-        line_y = y - int(line_font_size * 0.35)
-        draw.line((ix0 + text_pad_x, line_y, ix1 - text_pad_x, line_y), fill=(0, 0, 0, 80), width=2)
-        y += int(line_font_size * 0.15)
-
         for line in entry.lines[:3]:
             line = truncate(line, line_font)
             draw.text((ix0 + text_pad_x, y), line, font=line_font, fill=(0, 0, 0))
