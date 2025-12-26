@@ -27,6 +27,8 @@ DEFAULT_CARD_ID = "inspiration"
 DEFAULT_ROTATION_MODE = "daily"  # daily|sequential|random
 DEFAULT_ROTATION_PERIOD_MINUTES = 60
 DISABLED_CARD_IDS = {"family"}
+QUOTE_MIN_BODY_FONT_SIZE = 18
+BANNER_RESERVE_TOP_PX = 80
 
 
 class DailyThemeCard(BasePlugin):
@@ -111,6 +113,12 @@ class DailyThemeCard(BasePlugin):
                 cache_id=illustration_cache_id,
                 blur=(background_mode == "illustration_blur"),
             )
+        banner = None
+        try:
+            banner = banner_from_env(device_config, now=now)
+        except Exception:
+            logger.exception("Failed to compute family banner; continuing.")
+
         left = self._render_card_left_panel(
             card_id=active_card_id,
             day_key=day_key,
@@ -118,9 +126,9 @@ class DailyThemeCard(BasePlugin):
             size=(image_width, height),
             base=base,
             draw_card_box=(background_mode != "plain"),
+            reserve_top_px=(BANNER_RESERVE_TOP_PX if banner else 0),
         )
         try:
-            banner = banner_from_env(device_config, now=now)
             if banner:
                 draw_family_banner(
                     left,
@@ -640,7 +648,17 @@ class DailyThemeCard(BasePlugin):
         candidates.sort(key=lambda t: t[0])
         return candidates[0][1]
 
-    def _render_card_left_panel(self, *, card_id, day_key, cycle_key, size, base=None, draw_card_box=False):
+    def _render_card_left_panel(
+        self,
+        *,
+        card_id,
+        day_key,
+        cycle_key,
+        size,
+        base=None,
+        draw_card_box=False,
+        reserve_top_px: int = 0,
+    ):
         w, h = size
         if base is not None:
             img = base.copy().convert("RGB")
@@ -651,16 +669,6 @@ class DailyThemeCard(BasePlugin):
         spec = self._card_spec(card_id) or {"type": "quote", "items": []}
         card_type = (spec.get("type") or "quote").strip().lower()
         items = spec.get("items") or []
-
-        if card_type == "family":
-            pick = self._pick_family_item(items, day_key=day_key)
-        else:
-            seed = f"{card_id}|{cycle_key or day_key}"
-            if items:
-                idx = int(hashlib.sha256(seed.encode("utf-8")).hexdigest(), 16) % len(items)
-                pick = items[idx]
-            else:
-                pick = {"text": "No items configured.", "attribution": ""}
 
         pad = max(18, int(w * 0.07))
         max_w = w - pad * 2
@@ -710,11 +718,89 @@ class DailyThemeCard(BasePlugin):
             lines.append(current)
             return lines
 
+        def _quote_fit_result(candidate_text: str, candidate_attr: str):
+            body_size_local = max(16, int(w * 0.075))
+            small_size = max(12, int(w * 0.05))
+            body_font_local = self._font("Jost", body_size_local)
+            small_font_local = self._font("Jost", small_size)
+            max_body_h = int(h * 0.70)
+            line_gap = int(max(2, pad * 0.08))
+
+            for _ in range(8):
+                body_lines_local = wrap(candidate_text, body_font_local, content_max_w)
+                body_h_local = len(body_lines_local) * line_height(body_font_local)
+                footer_h_local = (line_height(small_font_local) * (2 if candidate_attr else 1)) + int(pad * 0.7)
+                if body_h_local + footer_h_local <= max_body_h or body_size_local <= QUOTE_MIN_BODY_FONT_SIZE:
+                    break
+                body_size_local -= 2
+                body_font_local = self._font("Jost", body_size_local)
+
+            body_lines_local = wrap(candidate_text, body_font_local, content_max_w)
+            quote_lines_local = [f"“{body_lines_local[0]}" if body_lines_local else "“"]
+            quote_lines_local += body_lines_local[1:]
+            if quote_lines_local:
+                quote_lines_local[-1] = f"{quote_lines_local[-1]}”"
+
+            body_h_local = len(quote_lines_local) * (line_height(body_font_local) + line_gap)
+            attr_h_local = 0
+            if candidate_attr:
+                attr_h_local = int(pad * 0.4) + line_height(small_font_local)
+            total_h_local = int(body_h_local + attr_h_local)
+
+            y_local = max(pad, int((h - total_h_local) / 2))
+            y0_local = y_local
+            y1_local = y_local + total_h_local
+            top_limit = max(pad, int(reserve_top_px or 0))
+            bottom_limit = h - pad
+
+            fits = True
+            if body_size_local < QUOTE_MIN_BODY_FONT_SIZE:
+                fits = False
+            if y0_local < top_limit:
+                fits = False
+            if y1_local > bottom_limit:
+                fits = False
+
+            return fits, body_size_local
+
+        # Choose a card item.
+        if card_type == "family":
+            pick = self._pick_family_item(items, day_key=day_key)
+            fitted_body_size = None
+        else:
+            seed = f"{card_id}|{cycle_key or day_key}"
+            if items:
+                start_idx = int(hashlib.sha256(seed.encode("utf-8")).hexdigest(), 16) % len(items)
+                pick = items[start_idx]
+            else:
+                start_idx = 0
+                pick = {"text": "No items configured.", "attribution": ""}
+
+            fitted_body_size = None
+            if card_type == "quote" and items:
+                for offset in range(len(items)):
+                    candidate = items[(start_idx + offset) % len(items)]
+                    if not isinstance(candidate, dict):
+                        continue
+                    candidate_text = (candidate.get("text") or "").strip()
+                    candidate_attr = (candidate.get("attribution") or "").strip()
+                    if not candidate_text:
+                        continue
+                    fits, body_size_candidate = _quote_fit_result(candidate_text, candidate_attr)
+                    if fits:
+                        pick = candidate
+                        fitted_body_size = body_size_candidate
+                        break
+
         text = (pick.get("text") or "").strip()
         attribution = (pick.get("attribution") or "").strip()
 
         is_word = card_type == "word"
         is_family = card_type == "family"
+
+        if fitted_body_size is not None:
+            body_size = int(fitted_body_size)
+            body_font = self._font("Jost", body_size)
 
         def draw_box(y0, total_h):
             if not draw_card_box:
@@ -783,7 +869,7 @@ class DailyThemeCard(BasePlugin):
             body_lines = wrap(text, body_font, content_max_w)
             body_h = len(body_lines) * line_height(body_font)
             footer_h = (line_height(small_font) * (2 if attribution else 1)) + int(pad * 0.7)
-            if body_h + footer_h <= max_body_h or body_size <= 12:
+            if body_h + footer_h <= max_body_h or body_size <= QUOTE_MIN_BODY_FONT_SIZE:
                 break
             body_size -= 2
             body_font = self._font("Jost", body_size)
