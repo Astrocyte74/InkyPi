@@ -170,9 +170,11 @@ class DailyThemeCard(BasePlugin):
         mode = str((settings or {}).get("rotationMode") or DEFAULT_ROTATION_MODE).strip().lower()
         if mode in {"seq", "sequence"}:
             mode = "sequential"
+        if mode in {"randomperrefresh", "random_per_refresh", "random-refresh", "randomrefresh"}:
+            mode = "random_per_refresh"
         if mode in {"perrefresh", "per_refresh", "refresh"}:
             mode = "per_refresh"
-        if mode not in {"daily", "sequential", "random", "per_refresh"}:
+        if mode not in {"daily", "sequential", "random", "per_refresh", "random_per_refresh"}:
             mode = DEFAULT_ROTATION_MODE
         return mode
 
@@ -209,7 +211,7 @@ class DailyThemeCard(BasePlugin):
         mode = cls._rotation_mode(settings)
 
         bucket = 0
-        if mode not in {"daily", "per_refresh"}:
+        if mode not in {"daily", "per_refresh", "random_per_refresh"}:
             period = cls._rotation_period_minutes(settings)
             try:
                 day = datetime.strptime(day_key, "%Y-%m-%d").date()
@@ -230,6 +232,11 @@ class DailyThemeCard(BasePlugin):
         if mode == "per_refresh":
             bucket = cls._per_refresh_bucket(day_key=day_key, cards_key=cards_key)
             idx = bucket % len(card_ids)
+            return card_ids[idx], day_key, bucket
+        if mode == "random_per_refresh":
+            bucket = cls._per_refresh_bucket(day_key=day_key, cards_key=cards_key)
+            seed = f"{day_key}|{bucket}|{cards_key}|{mode}".encode("utf-8")
+            idx = int(hashlib.sha256(seed).hexdigest(), 16) % len(card_ids)
             return card_ids[idx], day_key, bucket
         if mode == "sequential":
             idx = bucket % len(card_ids)

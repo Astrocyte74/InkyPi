@@ -79,7 +79,7 @@ class WorldFlags(BasePlugin):
 
         rotation_mode = self._rotation_mode(settings)
         rotation_period = self._rotation_period_minutes(settings)
-        if rotation_mode == "per_refresh":
+        if rotation_mode in {"per_refresh", "random_per_refresh"}:
             bucket = self._per_refresh_bucket(day_key=day_key, settings=settings)
         else:
             bucket = self._rotation_bucket(now, day_key, daily_refresh_time, tz, rotation_mode, rotation_period)
@@ -174,9 +174,11 @@ class WorldFlags(BasePlugin):
         mode = str((settings or {}).get("rotationMode") or "daily").strip().lower()
         if mode in {"seq", "sequence"}:
             mode = "sequential"
+        if mode in {"randomperrefresh", "random_per_refresh", "random-refresh", "randomrefresh"}:
+            mode = "random_per_refresh"
         if mode in {"perrefresh", "per_refresh", "refresh"}:
             mode = "per_refresh"
-        if mode not in {"daily", "sequential", "random", "per_refresh"}:
+        if mode not in {"daily", "sequential", "random", "per_refresh", "random_per_refresh"}:
             mode = "daily"
         return mode
 
@@ -209,7 +211,7 @@ class WorldFlags(BasePlugin):
     def _rotation_bucket(now: datetime, day_key: str, refresh_time: time, tz, mode: str, period_minutes: int) -> int:
         if mode == "daily":
             return 0
-        if mode == "per_refresh":
+        if mode in {"per_refresh", "random_per_refresh"}:
             return 0
         try:
             day = datetime.strptime(day_key, "%Y-%m-%d").date()
@@ -325,7 +327,16 @@ class WorldFlags(BasePlugin):
         if len(entries) == 1:
             return entries[0]
 
-        if mode in {"sequential", "per_refresh"}:
+        if mode == "per_refresh":
+            idx = bucket % len(entries)
+            return entries[idx]
+
+        if mode == "random_per_refresh":
+            seed = f"{day_key}|{bucket}|{mode}".encode("utf-8")
+            idx = int(hashlib.sha256(seed).hexdigest(), 16) % len(entries)
+            return entries[idx]
+
+        if mode == "sequential":
             idx = bucket % len(entries)
             return entries[idx]
 
