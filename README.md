@@ -21,6 +21,7 @@ InkyPi is an open-source, customizable E-Ink display powered by a Raspberry Pi. 
 - Easy installation and configuration, perfect for beginners and makers alike
 - Open source project allowing you to modify, customize, and create your own plugins
 - Set up scheduled playlists to display different plugins at designated times
+- Optional iOS Shortcuts-friendly HTTP API (see `docs/shortcuts_api.md`)
 
 **Plugins**:
 

@@ -96,6 +96,20 @@ Optional for remote updates via Telegram.
 - Restart the InkyPi service: `sudo systemctl restart inkypi.service`
 - If `TELEGRAM_ALLOWED_IDS` is empty, the bot responds to any chat. Add your personal ID to restrict usage.
 
+## iOS Shortcuts API Token (optional)
+
+InkyPi includes a small local HTTP API under `/api/` intended for iOS Shortcuts and other lightweight clients.
+
+- To require auth, add a token to `/usr/local/inkypi/.env`:
+    ```
+    INKYPI_SHORTCUTS_TOKEN=your-random-token
+    ```
+- Requests must include either:
+  - Header: `X-InkyPi-Token: <token>`
+  - Query param: `?token=<token>`
+
+See `docs/shortcuts_api.md` for endpoints and usage.
+
 ## OpenRouter Key
 
 Optional for using OpenRouter-compatible text models when randomising or enhancing prompts.

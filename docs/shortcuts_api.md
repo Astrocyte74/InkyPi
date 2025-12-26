@@ -1,0 +1,76 @@
+# iOS Shortcuts HTTP API
+
+InkyPi includes a small, local HTTP API intended for iOS Shortcuts (and other lightweight clients). This avoids Telegram command/UI quirks and keeps Shortcuts simple.
+
+All endpoints live under `/api/`.
+
+## Authentication (optional)
+
+If you set `INKYPI_SHORTCUTS_TOKEN` in your `.env`, requests must include either:
+
+- Header: `X-InkyPi-Token: <token>`
+- Query param: `?token=<token>`
+
+If `INKYPI_SHORTCUTS_TOKEN` is not set, the API is open on your LAN.
+
+## iPhone note: avoid `.local` timeouts
+
+On some networks, iOS can fail to resolve `*.local` (Bonjour/mDNS) reliably. If Safari/Shortcuts time out when using `http://inkypi.local/...`, use the Pi’s IP instead (find it on the Pi with `hostname -I`), e.g.:
+
+- `http://192.168.7.212/api/status?image=0`
+
+For long-term stability, set a DHCP reservation in your router so the IP doesn’t change.
+
+## `GET /api/status`
+
+Returns the current display status as JSON.
+
+Common usage (fast + reliable):
+
+- `GET /api/status?image=0`
+
+Response includes:
+
+- `status_text` (preformatted text, ideal for “Show Result” in Shortcuts)
+- `plugin_id`, `plugin_instance`
+- `last_refresh` and `next_refresh`
+- `image.url` (direct URL to the current display PNG, with cache-buster)
+- Optionally `image.base64_png` (large; can time out on iOS)
+
+Query params:
+
+- `image=0|1` (default `1`) — include the image in the response payload
+- `format=base64` (default) — if `image=1`, include `image.base64_png`
+
+Shortcut pattern:
+
+1. Get Contents of URL → `/api/status?image=0`
+2. Show Result → `status_text`
+3. Get Contents of URL → `image.url`
+4. Quick Look
+
+## `GET /api/next`
+
+Advances the frame to the next item in the active playlist and returns the updated status JSON (same shape as `/api/status`).
+
+Common usage:
+
+- `GET /api/next?image=0`
+
+What “next” does:
+
+- Always advances to the next plugin instance in the currently active playlist.
+- By default, it may *reuse* a plugin’s cached image (to avoid unnecessary API calls) unless forcing is enabled.
+
+Force behavior (`force=` controls whether the next plugin is forced to re-render):
+
+- Default (no `force=`): **smart**
+  - Forces a fresh render for `world_flags` and `daily_theme_card` (so you don’t see repeats)
+  - Does not force a fresh render for `daily_cat_weather` (keeps “image of the day”)
+- `force=all` (also accepts `force=1`) — force-regenerate whatever you land on (may trigger AI/API calls)
+- `force=none` (also accepts `force=0`) — never force regeneration; always use cached image if not due
+
+Query params:
+
+- `image=0|1` (default `1`)
+- `force=all|none` (default: smart when omitted)
