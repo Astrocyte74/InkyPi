@@ -1,0 +1,297 @@
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+<div class="form-group">
+    <label class="form-label">Location: </label>
+    <div class="form-group">
+        <span>Latitude </span>
+        <input type="text" id="latitude" name="latitude" class="form-input" inputmode="decimal" />
+    </div>
+    <div class="form-group">
+        <span>Longitude </span>
+        <input type="text" id="longitude" name="longitude" class="form-input" inputmode="decimal" />
+    </div>
+    <button type="button" id="openMap" class="action-button compact">Select Location</button>
+</div>
+
+<div class="form-group">
+    <label for="savedLocations" class="form-label">Saved Locations:</label>
+    <div class="form-group nowrap">
+        <select id="savedLocations" class="form-input"></select>
+        <button type="button" id="applySavedLocation" class="action-button compact">Use</button>
+    </div>
+    <div class="form-group nowrap" style="margin-top: 8px;">
+        <button type="button" id="saveCurrentLocation" class="action-button compact">Save Current</button>
+        <button type="button" id="deleteSavedLocation" class="action-button compact">Delete Selected</button>
+    </div>
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Saved in your browser.
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="locationLabel" class="form-label">Location Label (optional):</label>
+    <input type="text" id="locationLabel" name="locationLabel" placeholder="Carstairs, AB" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="units" class="form-label">Units:</label>
+    <select id="units" name="units" class="form-input">
+        <option value="imperial">Imperial (°F)</option>
+        <option value="metric">Metric (°C)</option>
+        <option value="standard">Standard (K)</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="forecastDays" class="form-label">Forecast Days:</label>
+    <select id="forecastDays" name="forecastDays" class="form-input">
+        <option value="3">3</option>
+        <option value="5">5</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="flagsPath" class="form-label">Flags Manifest Path (optional):</label>
+    <input type="text" id="flagsPath" name="flagsPath" placeholder="plugins/daily_theme_card/flags/flags.json" class="form-input">
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Leave blank to use the built-in manifest generated under <code>src/plugins/daily_theme_card/flags/flags.json</code>.
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="includeCodes" class="form-label">Include Codes (optional):</label>
+    <input type="text" id="includeCodes" name="includeCodes" placeholder="us, ca, mx" class="form-input">
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Comma/space separated ISO alpha-2 codes. If set, only these are used.
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="excludeCodes" class="form-label">Exclude Codes (optional):</label>
+    <input type="text" id="excludeCodes" name="excludeCodes" placeholder="ru" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="dailyRefreshTime" class="form-label">Daily Anchor Time (local):</label>
+    <input id="dailyRefreshTime" class="time-input" type="time" name="dailyRefreshTime" step="300">
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Used as the anchor for daily selection and rotation buckets.
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="rotationMode" class="form-label">Rotation Mode:</label>
+    <select id="rotationMode" name="rotationMode" class="form-input">
+        <option value="daily">Pick one per day</option>
+        <option value="sequential">Rotate sequentially</option>
+        <option value="random">Rotate randomly</option>
+    </select>
+</div>
+
+<div class="form-group" id="rotationPeriodContainer">
+    <label for="rotationPeriodMinutes" class="form-label">Rotation Period (minutes):</label>
+    <input type="number" id="rotationPeriodMinutes" name="rotationPeriodMinutes" class="form-input" min="1" max="1440" step="5" value="60">
+</div>
+
+<div id="mapModal" class="modal">
+    <div class="modal-content">
+        <span class="close-button" onclick="closeModal('mapModal')">×</span>
+        <h2 id="modalTitle">Select Location</h2>
+        <div class="separator"></div>
+        <div id="map" style="width: 100%; height: 200px; margin: 10px 0px;"></div>
+        <button id="closeMap" class="action-button">Save</button>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const OSM_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+        const $latitude = document.querySelector('#latitude');
+        const $longitude = document.querySelector('#longitude');
+        const $openMap = document.querySelector('#openMap');
+        const $closeMap = document.querySelector('#closeMap');
+        const $locationLabel = document.querySelector('#locationLabel');
+
+        const $savedLocations = document.querySelector('#savedLocations');
+        const $applySavedLocation = document.querySelector('#applySavedLocation');
+        const $saveCurrentLocation = document.querySelector('#saveCurrentLocation');
+        const $deleteSavedLocation = document.querySelector('#deleteSavedLocation');
+
+        const $rotationMode = document.querySelector('#rotationMode');
+        const $rotationPeriodContainer = document.querySelector('#rotationPeriodContainer');
+
+        const STORAGE_KEY = 'inkypi.world_flags.saved_locations';
+
+        let map, marker;
+
+        function parseFloatOrNull(value) {
+            const n = parseFloat((value || '').toString().trim());
+            return Number.isFinite(n) ? n : null;
+        }
+
+        function currentCoords() {
+            return {
+                lat: parseFloatOrNull($latitude.value),
+                lon: parseFloatOrNull($longitude.value),
+            };
+        }
+
+        function normalizeLocations(locations) {
+            const cleaned = [];
+            const seen = new Set();
+            (locations || []).forEach(item => {
+                if (!item) return;
+                const label = (item.label || '').toString().trim();
+                const lat = parseFloatOrNull(item.lat);
+                const lon = parseFloatOrNull(item.lon);
+                if (!label || lat === null || lon === null) return;
+                const key = `${label}|${lat.toFixed(6)}|${lon.toFixed(6)}`;
+                if (seen.has(key)) return;
+                seen.add(key);
+                cleaned.push({ label, lat, lon });
+            });
+            return cleaned;
+        }
+
+        function loadSavedLocations() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                const parsed = raw ? JSON.parse(raw) : [];
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function saveSavedLocations(locations) {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(locations));
+            } catch (e) {
+                // ignore
+            }
+        }
+
+        function renderSavedLocations() {
+            const locations = normalizeLocations(loadSavedLocations());
+            $savedLocations.innerHTML = '';
+
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = locations.length ? 'Select…' : 'No saved locations';
+            $savedLocations.appendChild(placeholder);
+
+            locations.forEach((loc, idx) => {
+                const opt = document.createElement('option');
+                opt.value = String(idx);
+                opt.textContent = `${loc.label} (${loc.lat.toFixed(3)}, ${loc.lon.toFixed(3)})`;
+                $savedLocations.appendChild(opt);
+            });
+        }
+
+        function applyLocation(loc) {
+            if (!loc) return;
+            $latitude.value = Number(loc.lat).toFixed(6);
+            $longitude.value = Number(loc.lon).toFixed(6);
+            if ($locationLabel && (!$locationLabel.value || !$locationLabel.value.trim())) {
+                $locationLabel.value = (loc.label || '').toString();
+            }
+        }
+
+        function ensureMap() {
+            if (map) return;
+            const coords = currentCoords();
+            const initLat = coords.lat ?? 51.048615;
+            const initLon = coords.lon ?? -114.070846;
+            const initZoom = coords.lat !== null && coords.lon !== null ? 10 : 4;
+
+            map = L.map('map').setView([initLat, initLon], initZoom);
+            L.tileLayer(OSM_TILE_URL, { attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+
+            marker = L.marker([initLat, initLon], { draggable: true }).addTo(map);
+            marker.on('dragend', () => {
+                const position = marker.getLatLng().wrap();
+                $latitude.value = position.lat.toFixed(6);
+                $longitude.value = position.lng.toFixed(6);
+            });
+            map.on('click', (event) => {
+                const position = event.latlng.wrap();
+                marker.setLatLng(position);
+                $latitude.value = position.lat.toFixed(6);
+                $longitude.value = position.lng.toFixed(6);
+            });
+        }
+
+        $openMap.addEventListener('click', () => {
+            openModal('mapModal');
+            ensureMap();
+            setTimeout(() => { try { map.invalidateSize(); } catch (e) {} }, 100);
+        });
+
+        $closeMap.addEventListener('click', () => {
+            if (marker) {
+                const position = marker.getLatLng().wrap();
+                $latitude.value = position.lat.toFixed(6);
+                $longitude.value = position.lng.toFixed(6);
+            }
+            closeModal('mapModal');
+        });
+
+        $applySavedLocation.addEventListener('click', () => {
+            const idx = parseInt($savedLocations.value, 10);
+            if (!Number.isFinite(idx)) return;
+            const locations = normalizeLocations(loadSavedLocations());
+            applyLocation(locations[idx]);
+        });
+
+        $saveCurrentLocation.addEventListener('click', () => {
+            const coords = currentCoords();
+            if (coords.lat === null || coords.lon === null) return;
+            const label = ($locationLabel?.value || '').trim() || 'Saved location';
+            const locations = normalizeLocations(loadSavedLocations());
+            locations.unshift({ label, lat: coords.lat, lon: coords.lon });
+            saveSavedLocations(normalizeLocations(locations));
+            renderSavedLocations();
+            $savedLocations.value = '0';
+        });
+
+        $deleteSavedLocation.addEventListener('click', () => {
+            const idx = parseInt($savedLocations.value, 10);
+            if (!Number.isFinite(idx)) return;
+            const locations = normalizeLocations(loadSavedLocations());
+            locations.splice(idx, 1);
+            saveSavedLocations(locations);
+            renderSavedLocations();
+        });
+
+        function updateRotationVisibility() {
+            const mode = ($rotationMode.value || 'daily').toString().toLowerCase();
+            $rotationPeriodContainer.style.display = (mode === 'daily') ? 'none' : '';
+        }
+        $rotationMode.addEventListener('change', updateRotationVisibility);
+
+        if (loadPluginSettings) {
+            document.getElementById('latitude').value = pluginSettings.latitude || '';
+            document.getElementById('longitude').value = pluginSettings.longitude || '';
+            document.getElementById('locationLabel').value = pluginSettings.locationLabel || '';
+            document.getElementById('units').value = pluginSettings.units || 'metric';
+            document.getElementById('forecastDays').value = pluginSettings.forecastDays || '3';
+            document.getElementById('flagsPath').value = pluginSettings.flagsPath || '';
+            document.getElementById('includeCodes').value = pluginSettings.includeCodes || '';
+            document.getElementById('excludeCodes').value = pluginSettings.excludeCodes || '';
+            document.getElementById('dailyRefreshTime').value = pluginSettings.dailyRefreshTime || '04:00';
+            document.getElementById('rotationMode').value = (pluginSettings.rotationMode || 'daily').toString().toLowerCase();
+            document.getElementById('rotationPeriodMinutes').value = parseInt((pluginSettings.rotationPeriodMinutes || '60').toString(), 10) || 60;
+        } else {
+            document.getElementById('units').value = 'metric';
+            document.getElementById('forecastDays').value = '3';
+            document.getElementById('dailyRefreshTime').value = '04:00';
+            document.getElementById('rotationMode').value = 'daily';
+            document.getElementById('rotationPeriodMinutes').value = 60;
+        }
+
+        updateRotationVisibility();
+        renderSavedLocations();
+    });
+</script>
+
