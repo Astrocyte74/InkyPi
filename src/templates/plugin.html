@@ -18,6 +18,7 @@
         const pluginInstanceName ='{{ plugin_instance }}';
         const loadPluginSettings = pluginInstanceName != '';
         const styleSettings = {{ style_settings | default(false) | tojson }};
+        const pluginCycleIntervalSeconds = {{ plugin_cycle_interval_seconds | default(0) | int }};
 
         let uploadedFiles = {};
 
@@ -164,6 +165,42 @@
             if (hiddenElement) {
                 hiddenElement.remove();
             }
+        }
+
+        function formatDuration(seconds) {
+            const s = parseInt(seconds, 10);
+            if (!Number.isFinite(s) || s <= 0) return '';
+            if (s % 86400 === 0) return `${s / 86400} day`;
+            if (s % 3600 === 0) return `${s / 3600} hour`;
+            if (s % 60 === 0) return `${s / 60} minute`;
+            return `${Math.round(s / 60)} minute`;
+        }
+
+        function applyCycleIntervalToRefreshForm() {
+            if (!pluginCycleIntervalSeconds || pluginCycleIntervalSeconds <= 0) return;
+            const intervalInput = document.getElementById('interval');
+            const unitSelect = document.getElementById('unit');
+            const refreshIntervalRadio = document.querySelector('input[name="refreshType"][value="interval"]');
+            if (refreshIntervalRadio) refreshIntervalRadio.checked = true;
+
+            const s = pluginCycleIntervalSeconds;
+            if (s % 86400 === 0) {
+                intervalInput.value = String(Math.max(1, s / 86400));
+                unitSelect.value = 'day';
+                return;
+            }
+            if (s % 3600 === 0) {
+                intervalInput.value = String(Math.max(1, s / 3600));
+                unitSelect.value = 'hour';
+                return;
+            }
+            if (s % 60 === 0) {
+                intervalInput.value = String(Math.max(1, s / 60));
+                unitSelect.value = 'minute';
+                return;
+            }
+            intervalInput.value = String(Math.max(1, Math.round(s / 60)));
+            unitSelect.value = 'minute';
         }
 
         // populate form values from plugin settings
@@ -381,6 +418,16 @@
                     <label>Refresh</label>
                     <span title="Determines how often the data and image should be refreshed.">ⓘ</span>
                 </div>
+                {% if plugin_cycle_interval_seconds %}
+                <div class="form-group">
+                    <div style="font-size: 0.9em; opacity: 0.85;">
+                        Plugin Cycle Interval: <span id="cycleIntervalDisplay">{{ (plugin_cycle_interval_seconds // 60) }} minute</span>
+                    </div>
+                    <button type="button" id="useCycleInterval" class="action-button compact" style="margin-top: 8px;">
+                        Use Plugin Cycle Interval
+                    </button>
+                </div>
+                {% endif %}
                 <div class="form-group nowrap">
                     <input type="radio" name="refreshType" value="interval" checked>
                     <label for="interval">Every</label>
@@ -402,5 +449,18 @@
             </div>
         </div>
     </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const display = document.getElementById('cycleIntervalDisplay');
+            if (display) {
+                const pretty = formatDuration(pluginCycleIntervalSeconds);
+                display.textContent = pretty ? pretty : display.textContent;
+            }
+            const btn = document.getElementById('useCycleInterval');
+            if (btn) {
+                btn.addEventListener('click', () => applyCycleIntervalToRefreshForm());
+            }
+        });
+    </script>
 </body>
 </html>
