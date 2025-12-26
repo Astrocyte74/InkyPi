@@ -30,6 +30,8 @@ DISABLED_CARD_IDS = {"family"}
 
 
 class DailyThemeCard(BasePlugin):
+    _PER_REFRESH_COUNTER: dict[str, int] = {}
+
     def generate_settings_template(self):
         template_params = super().generate_settings_template()
         template_params["api_key"] = {
@@ -168,9 +170,18 @@ class DailyThemeCard(BasePlugin):
         mode = str((settings or {}).get("rotationMode") or DEFAULT_ROTATION_MODE).strip().lower()
         if mode in {"seq", "sequence"}:
             mode = "sequential"
-        if mode not in {"daily", "sequential", "random"}:
+        if mode in {"perrefresh", "per_refresh", "refresh"}:
+            mode = "per_refresh"
+        if mode not in {"daily", "sequential", "random", "per_refresh"}:
             mode = DEFAULT_ROTATION_MODE
         return mode
+
+    @classmethod
+    def _per_refresh_bucket(cls, *, day_key: str, cards_key: str) -> int:
+        seed = json.dumps({"day_key": day_key, "cards_key": cards_key}, sort_keys=True, separators=(",", ":"))
+        key = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+        cls._PER_REFRESH_COUNTER[key] = cls._PER_REFRESH_COUNTER.get(key, -1) + 1
+        return cls._PER_REFRESH_COUNTER[key]
 
     @classmethod
     def _rotation_period_minutes(cls, settings):
@@ -198,7 +209,7 @@ class DailyThemeCard(BasePlugin):
         mode = cls._rotation_mode(settings)
 
         bucket = 0
-        if mode != "daily":
+        if mode not in {"daily", "per_refresh"}:
             period = cls._rotation_period_minutes(settings)
             try:
                 day = datetime.strptime(day_key, "%Y-%m-%d").date()
@@ -216,6 +227,10 @@ class DailyThemeCard(BasePlugin):
             seed = f"{day_key}|{cards_key}".encode("utf-8")
             idx = int(hashlib.sha256(seed).hexdigest(), 16) % len(card_ids)
             return card_ids[idx], day_key, 0
+        if mode == "per_refresh":
+            bucket = cls._per_refresh_bucket(day_key=day_key, cards_key=cards_key)
+            idx = bucket % len(card_ids)
+            return card_ids[idx], day_key, bucket
         if mode == "sequential":
             idx = bucket % len(card_ids)
             return card_ids[idx], day_key, bucket

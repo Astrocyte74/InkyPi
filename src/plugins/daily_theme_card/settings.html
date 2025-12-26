@@ -143,6 +143,7 @@
     <label for="rotationMode" class="form-label">Rotation:</label>
     <select id="rotationMode" name="rotationMode" class="form-input">
         <option value="daily">Pick one per day</option>
+        <option value="per_refresh">Advance once per refresh</option>
         <option value="sequential">Rotate sequentially</option>
         <option value="random">Rotate randomly</option>
     </select>
@@ -405,7 +406,7 @@
 
         function updateRotationVisibility() {
             const mode = ($rotationMode.value || 'daily').toString().toLowerCase();
-            $rotationPeriodContainer.style.display = (mode === 'daily') ? 'none' : '';
+            $rotationPeriodContainer.style.display = (mode === 'daily' || mode === 'per_refresh') ? 'none' : '';
         }
 
         document.querySelectorAll('.card-choice').forEach(box => {

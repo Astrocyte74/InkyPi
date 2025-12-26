@@ -37,6 +37,7 @@ class WorldFlags(BasePlugin):
     """Render a world flag + small info box in the left panel with the standard weather sidebar."""
 
     _FLAGS_CACHE: tuple[str, float, list[FlagEntry]] | None = None
+    _PER_REFRESH_COUNTER: dict[str, int] = {}
 
     def generate_settings_template(self):
         template_params = super().generate_settings_template()
@@ -78,7 +79,10 @@ class WorldFlags(BasePlugin):
 
         rotation_mode = self._rotation_mode(settings)
         rotation_period = self._rotation_period_minutes(settings)
-        bucket = self._rotation_bucket(now, day_key, daily_refresh_time, tz, rotation_mode, rotation_period)
+        if rotation_mode == "per_refresh":
+            bucket = self._per_refresh_bucket(day_key=day_key, settings=settings)
+        else:
+            bucket = self._rotation_bucket(now, day_key, daily_refresh_time, tz, rotation_mode, rotation_period)
 
         flags_path = (settings.get("flagsPath") or "").strip() or FLAGS_PATH_DEFAULT
         entries = self._load_flags(flags_path, device_config)
@@ -170,7 +174,9 @@ class WorldFlags(BasePlugin):
         mode = str((settings or {}).get("rotationMode") or "daily").strip().lower()
         if mode in {"seq", "sequence"}:
             mode = "sequential"
-        if mode not in {"daily", "sequential", "random"}:
+        if mode in {"perrefresh", "per_refresh", "refresh"}:
+            mode = "per_refresh"
+        if mode not in {"daily", "sequential", "random", "per_refresh"}:
             mode = "daily"
         return mode
 
@@ -183,9 +189,27 @@ class WorldFlags(BasePlugin):
             minutes = 60
         return max(1, min(1440, minutes))
 
+    @classmethod
+    def _per_refresh_bucket(cls, *, day_key: str, settings: dict) -> int:
+        seed = json.dumps(
+            {
+                "day_key": day_key,
+                "include": settings.get("includeCodes"),
+                "exclude": settings.get("excludeCodes"),
+                "flagsPath": settings.get("flagsPath"),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        key = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+        cls._PER_REFRESH_COUNTER[key] = cls._PER_REFRESH_COUNTER.get(key, -1) + 1
+        return cls._PER_REFRESH_COUNTER[key]
+
     @staticmethod
     def _rotation_bucket(now: datetime, day_key: str, refresh_time: time, tz, mode: str, period_minutes: int) -> int:
         if mode == "daily":
+            return 0
+        if mode == "per_refresh":
             return 0
         try:
             day = datetime.strptime(day_key, "%Y-%m-%d").date()
@@ -301,7 +325,7 @@ class WorldFlags(BasePlugin):
         if len(entries) == 1:
             return entries[0]
 
-        if mode == "sequential":
+        if mode in {"sequential", "per_refresh"}:
             idx = bucket % len(entries)
             return entries[idx]
 
