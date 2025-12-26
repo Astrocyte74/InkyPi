@@ -122,6 +122,18 @@ def _build_status_payload(*, now: datetime, include_image: bool, include_image_b
         except Exception:
             logger.exception("Failed reading current image.")
 
+    image_url = None
+    try:
+        if current_path and os.path.exists(current_path):
+            # Stable URL for iOS Shortcuts (smaller/faster than base64 for large payloads).
+            base = request.host_url.rstrip("/")
+            cache_bust = ""
+            if last_refresh_iso:
+                cache_bust = f"?t={last_refresh_iso}"
+            image_url = f"{base}/static/images/current_image.png{cache_bust}"
+    except Exception:
+        image_url = None
+
     payload = {
         "ok": True,
         "status_text": "\n".join(
@@ -151,6 +163,7 @@ def _build_status_payload(*, now: datetime, include_image: bool, include_image_b
             "present": bool(image_bytes),
             "content_type": "image/png" if image_bytes else None,
             "base64_png": image_b64,
+            "url": image_url,
         },
     }
     return payload
@@ -167,7 +180,8 @@ def status():
         return jsonify({"error": "Unauthorized"}), 401
 
     include_image = str(request.args.get("image", "1")).strip().lower() not in {"0", "false", "no"}
-    include_image_base64 = str(request.args.get("format", "base64")).strip().lower() in {"base64", "b64", "json"}
+    fmt = str(request.args.get("format", "base64")).strip().lower()
+    include_image_base64 = fmt in {"base64", "b64", "json"}
 
     now = None
     try:
