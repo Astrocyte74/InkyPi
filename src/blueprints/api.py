@@ -828,7 +828,15 @@ def ai_generate():
     if not plugin_config:
         return jsonify({"error": "AI Image plugin is not available."}), 500
     ai_plugin = get_plugin_instance(plugin_config)
-    raw = ai_plugin.generate_image(settings, device_config).convert("RGB")
+    try:
+        raw = ai_plugin.generate_image(settings, device_config).convert("RGB")
+    except RuntimeError as exc:
+        # Keep iOS Shortcuts-friendly JSON (avoid HTML 500 pages).
+        msg = str(exc) or "AI generation failed."
+        return jsonify({"error": msg}), 400
+    except Exception as exc:
+        logger.exception("API AI generation failed: %s", exc)
+        return jsonify({"error": "AI generation failed, please check logs."}), 500
 
     # Determine sizes (match the Daily Cat layout ratio).
     try:
