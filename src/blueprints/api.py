@@ -707,10 +707,17 @@ def ai_generate():
                 from openai import OpenAI
                 openai_key = (device_config.load_env_key("OPEN_AI_SECRET") or "").strip()
                 openrouter_key = (device_config.load_env_key("OPEN_ROUTER_SECRET") or "").strip()
-                if openai_key or openrouter_key:
-                    ai_plugin = AIImage()
-                    ai_client = OpenAI(api_key=openai_key) if openai_key else None
-                    prompt_client = ai_plugin._get_prompt_client(device_config, ai_client)  # pylint: disable=protected-access
+                if openrouter_key:
+                    prompt_client = {
+                        "type": "openrouter",
+                        "api_key": openrouter_key,
+                        "model": AIImage._resolve_openrouter_model(device_config.load_env_key("OPEN_ROUTER_MODEL")),
+                        "referer": device_config.load_env_key("OPEN_ROUTER_REFERRER") or "https://github.com/fatihak/InkyPi",
+                        "title": device_config.load_env_key("OPEN_ROUTER_TITLE") or "InkyPi",
+                    }
+                    enhanced = (AIImage.enhance_prompt(prompt_client, idea) or "").strip()
+                elif openai_key:
+                    prompt_client = {"type": "openai", "client": OpenAI(api_key=openai_key)}
                     enhanced = (AIImage.enhance_prompt(prompt_client, idea) or "").strip()
             except Exception:
                 logger.exception("AI prompt enhancement failed; using raw idea.")
@@ -778,7 +785,7 @@ def ai_generate():
         return jsonify(payload)
 
     # --- Temporary mode (one-off slide) -----------------------------------
-    from plugins.ai_image.ai_image import AIImage
+    from plugins.plugin_registry import get_plugin_instance
     from utils.openweather import fetch_weather_snapshot
     from utils.weather_sidebar import render_weather_sidebar_panel
     from utils.family_events import banner_from_env
@@ -817,7 +824,10 @@ def ai_generate():
         "vanGoghStyle": "false",
     }
 
-    ai_plugin = AIImage()
+    plugin_config = device_config.get_plugin("ai_image")
+    if not plugin_config:
+        return jsonify({"error": "AI Image plugin is not available."}), 500
+    ai_plugin = get_plugin_instance(plugin_config)
     raw = ai_plugin.generate_image(settings, device_config).convert("RGB")
 
     # Determine sizes (match the Daily Cat layout ratio).
