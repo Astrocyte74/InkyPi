@@ -102,3 +102,25 @@ Notes:
 - By default, the API returns quickly and the banner will appear/disappear on the next cycle.
 - Optional: `refresh=1` queues an immediate refresh (async) if the current slide renders the banner:
   - `POST /api/banner?clear=1&refresh=1&image=0`
+
+## `POST /api/ai`
+
+Generate a one-off image from an idea using the standard 2-panel layout (left image + right weather sidebar).
+
+Common usage (temporary):
+
+- `POST /api/ai?idea=an%20ambitious%20cat%20building%20a%20snowman&enhance=1&image=0`
+
+Optional params:
+
+- `model=...` (default: first entry in `TELEGRAM_AI_DEFAULT_MODEL`, else `gemini-2.5-flash-image`)
+- `style=van_gogh|illustration|drawing|far_side` (optional)
+- `palette=spectra6|bw` (default `spectra6`)
+
+Make it today’s illustration-of-the-day (persists):
+
+- `POST /api/ai?idea=...&today=1&enhance=1&image=0`
+
+Notes:
+
+- `today=1` updates `daily_cat_weather` settings (`customPrompt*`, bumps `rerollNonce`) and rerolls the Daily Cat background cache.

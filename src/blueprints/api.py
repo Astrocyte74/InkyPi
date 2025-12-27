@@ -635,3 +635,301 @@ def banner():
     payload = _build_status_payload(now=now, include_image=include_image, include_image_base64=include_image_base64)
     payload["action"] = action
     return jsonify(payload)
+
+
+@api_bp.route("/ai", methods=["GET", "POST"])
+def ai_generate():
+    """
+    Generate a new image from an idea and display it using the standard 2-panel layout.
+
+    Modes:
+    - Temporary (default): generate and display a one-off slide (does not change daily_cat_weather settings).
+    - Today: set the idea as today's Daily Cat custom prompt and reroll (persists as the illustration-of-the-day).
+    """
+    if not _require_token():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    include_image = str(request.args.get("image", "1")).strip().lower() not in {"0", "false", "no"}
+    include_image_base64 = str(request.args.get("format", "base64")).strip().lower() in {"base64", "b64", "json"}
+
+    device_config = current_app.config["DEVICE_CONFIG"]
+    display_manager = current_app.config["DISPLAY_MANAGER"]
+    refresh_task = current_app.config.get("REFRESH_TASK")
+
+    now = None
+    try:
+        now = refresh_task._get_current_datetime() if refresh_task and hasattr(refresh_task, "_get_current_datetime") else None
+    except Exception:
+        now = None
+    if now is None:
+        now = datetime.utcnow()
+
+    data = request.get_json(silent=True) if request.method == "POST" else None
+    idea = request.args.get("idea")
+    if idea is None and isinstance(data, dict):
+        idea = data.get("idea")
+    idea = (idea or "").strip()
+    if not idea:
+        return jsonify({"error": "Missing 'idea'."}), 400
+
+    enhance_raw = request.args.get("enhance")
+    enhance = False
+    if enhance_raw is not None:
+        enhance = str(enhance_raw).strip().lower() in {"1", "true", "yes", "on"}
+    elif isinstance(data, dict) and "enhance" in data:
+        enhance = bool(data.get("enhance"))
+
+    today_raw = request.args.get("today")
+    today = False
+    if today_raw is not None:
+        today = str(today_raw).strip().lower() in {"1", "true", "yes", "on"}
+    elif isinstance(data, dict) and "today" in data:
+        today = bool(data.get("today"))
+
+    playlist_manager = device_config.get_playlist_manager()
+    playlist = playlist_manager.determine_active_playlist(now)
+    if not playlist or not playlist.plugins:
+        return jsonify({"error": "No active playlist with plugins."}), 400
+
+    # Find the Daily Cat instance, to source weather + (optionally) persist "today" prompt.
+    cat_instance = next((p for p in playlist.plugins if p.plugin_id == "daily_cat_weather"), None)
+    cat_settings = (cat_instance.settings or {}) if cat_instance else {}
+
+    if today:
+        if not cat_instance:
+            return jsonify({"error": "Daily Cat Weather isn't enabled in the active playlist."}), 400
+
+        # Optional prompt enhancement via OpenRouter/OpenAI (same helper used by AIImage).
+        enhanced = ""
+        if enhance:
+            try:
+                from plugins.ai_image.ai_image import AIImage
+                from openai import OpenAI
+                openai_key = (device_config.load_env_key("OPEN_AI_SECRET") or "").strip()
+                openrouter_key = (device_config.load_env_key("OPEN_ROUTER_SECRET") or "").strip()
+                if openai_key or openrouter_key:
+                    ai_plugin = AIImage()
+                    ai_client = OpenAI(api_key=openai_key) if openai_key else None
+                    prompt_client = ai_plugin._get_prompt_client(device_config, ai_client)  # pylint: disable=protected-access
+                    enhanced = (AIImage.enhance_prompt(prompt_client, idea) or "").strip()
+            except Exception:
+                logger.exception("AI prompt enhancement failed; using raw idea.")
+                enhanced = ""
+
+        cat_instance.settings = cat_instance.settings or {}
+        try:
+            current_nonce = int(cat_instance.settings.get("rerollNonce") or 0)
+        except (TypeError, ValueError):
+            current_nonce = 0
+        cat_instance.settings["rerollNonce"] = current_nonce + 1
+
+        daily_refresh_time = _parse_hhmm(cat_instance.settings.get("dailyRefreshTime") or "04:00")
+        day = _day_key(now, daily_refresh_time)
+        cat_instance.settings["customPrompt"] = idea
+        if enhanced:
+            cat_instance.settings["customPromptEnhanced"] = enhanced
+        else:
+            cat_instance.settings.pop("customPromptEnhanced", None)
+        cat_instance.settings["customPromptDayKey"] = day
+
+        cache_id, day_key, removed = _clear_daily_cat_cache(device_config, cat_instance, now)
+        try:
+            device_config.write_config()
+        except Exception:
+            logger.exception("Failed to persist Daily Cat settings.")
+
+        # Force refresh of the cat slide now.
+        from plugins.plugin_registry import get_plugin_instance
+        from refresh_task import PlaylistRefresh
+        from utils.image_utils import compute_image_hash
+        from model import RefreshInfo
+
+        lock = getattr(refresh_task, "lock", None)
+        ctx = lock if lock is not None else nullcontext()
+        with ctx:
+            plugin_config = device_config.get_plugin(cat_instance.plugin_id)
+            if not plugin_config:
+                return jsonify({"error": "Daily Cat Weather plugin config not found."}), 404
+            plugin = get_plugin_instance(plugin_config)
+            image = PlaylistRefresh(playlist, cat_instance, force=True).execute(plugin, device_config, now)
+            display_manager.display_image(image, image_settings=plugin_config.get("image_settings", []))
+            image_hash = compute_image_hash(image)
+            device_config.refresh_info = RefreshInfo(
+                refresh_type="API AI Today",
+                plugin_id=cat_instance.plugin_id,
+                refresh_time=now.isoformat(),
+                image_hash=image_hash,
+                playlist=playlist.name,
+                plugin_instance=cat_instance.name,
+            )
+            device_config.write_config()
+
+        payload = _build_status_payload(now=now, include_image=include_image, include_image_base64=include_image_base64)
+        payload["action"] = {
+            "type": "ai",
+            "mode": "today",
+            "idea": idea,
+            "enhanced": enhanced or None,
+            "cache_id": cache_id,
+            "day": day_key,
+            "reroll_nonce": cat_instance.settings.get("rerollNonce"),
+            "removed_cache_files": removed,
+        }
+        return jsonify(payload)
+
+    # --- Temporary mode (one-off slide) -----------------------------------
+    from plugins.ai_image.ai_image import AIImage
+    from utils.openweather import fetch_weather_snapshot
+    from utils.weather_sidebar import render_weather_sidebar_panel
+    from utils.family_events import banner_from_env
+    from utils.family_banner import draw_family_banner
+    from utils.image_utils import compute_image_hash
+    from model import RefreshInfo
+    from PIL import Image
+
+    model = request.args.get("model")
+    if model is None and isinstance(data, dict):
+        model = data.get("model")
+    model = (model or "").strip()
+    if not model:
+        model = (device_config.load_env_key("TELEGRAM_AI_DEFAULT_MODEL") or "").split(",")[0].strip() or "gemini-2.5-flash-image"
+
+    palette = request.args.get("palette")
+    if palette is None and isinstance(data, dict):
+        palette = data.get("palette")
+    palette = (palette or "spectra6").strip().lower()
+    if palette not in {"spectra6", "bw"}:
+        palette = "spectra6"
+
+    style_hint = request.args.get("style")
+    if style_hint is None and isinstance(data, dict):
+        style_hint = data.get("style")
+    style_hint = (style_hint or "").strip().lower()
+
+    settings = {
+        "textPrompt": idea,
+        "imageModel": model,
+        "quality": (request.args.get("quality") or "2k").strip().lower(),
+        "palette": palette,
+        "randomizePrompt": "false",
+        "creativeEnhance": "true" if enhance else "false",
+        "styleHint": style_hint,
+        "vanGoghStyle": "false",
+    }
+
+    ai_plugin = AIImage()
+    raw = ai_plugin.generate_image(settings, device_config).convert("RGB")
+
+    # Determine sizes (match the Daily Cat layout ratio).
+    try:
+        from plugins.daily_cat_weather.daily_cat_weather import SIDEBAR_WIDTH_RATIO, DailyCatWeather
+        sidebar_ratio = float(SIDEBAR_WIDTH_RATIO)
+        cover_crop = DailyCatWeather._cover_crop  # pylint: disable=protected-access
+        font_fn = DailyCatWeather._font  # pylint: disable=protected-access
+        icon_renderer = DailyCatWeather._simple_weather_icon  # pylint: disable=protected-access
+    except Exception:
+        sidebar_ratio = 0.30
+        cover_crop = None
+        font_fn = None
+        icon_renderer = None
+
+    width, height = device_config.get_resolution()
+    if device_config.get_config("orientation") == "vertical":
+        width, height = height, width
+
+    sidebar_width = int(width * sidebar_ratio)
+    sidebar_width = max(120, min(width - 100, sidebar_width))
+    image_width = width - sidebar_width
+
+    if cover_crop:
+        left_img = cover_crop(raw, (image_width, height))
+    else:
+        left_img = raw.resize((image_width, height))
+
+    # Weather sidebar (best-effort using Daily Cat settings for location/units).
+    weather = None
+    try:
+        owm_key = (device_config.load_env_key("OPEN_WEATHER_MAP_SECRET") or "").strip()
+        lat = (cat_settings.get("latitude") or "").strip()
+        lon = (cat_settings.get("longitude") or "").strip()
+        units = (cat_settings.get("units") or "metric").strip().lower()
+        forecast_days = int(cat_settings.get("forecastDays") or 3)
+        forecast_days = max(1, min(5, forecast_days))
+        ttl_min = int(cat_settings.get("weatherCacheMinutes") or 30)
+        ttl_min = max(0, min(1440, ttl_min))
+        if owm_key and lat and lon:
+            weather = fetch_weather_snapshot(
+                api_key=owm_key,
+                units=units,
+                lat=lat,
+                lon=lon,
+                now=now,
+                cache_ttl_sec=ttl_min * 60,
+            )
+    except Exception:
+        logger.exception("Failed to fetch weather for /api/ai; continuing without weather.")
+        weather = None
+
+    tz_str = device_config.get_config("timezone", default="UTC")
+    try:
+        tz = pytz.timezone(tz_str)
+    except Exception:
+        tz = pytz.UTC
+
+    location_label = (cat_settings.get("locationLabel") or "").strip()
+    if font_fn and icon_renderer:
+        sidebar = render_weather_sidebar_panel(
+            weather,
+            tz,
+            int(cat_settings.get("forecastDays") or 3),
+            (sidebar_width, height),
+            location_label,
+            font=font_fn,
+            icon_renderer=icon_renderer,
+        )
+    else:
+        sidebar = Image.new("RGB", (sidebar_width, height), (255, 255, 255))
+
+    canvas = Image.new("RGB", (width, height), (255, 255, 255))
+    canvas.paste(left_img, (0, 0))
+
+    # Optional family banner.
+    try:
+        banner = banner_from_env(device_config, now=now)
+        if banner:
+            draw_family_banner(
+                canvas,
+                headline=banner.get("headline") or "",
+                detail=banner.get("detail") or "",
+                font_fn=font_fn,
+                region=(0, 0, image_width, height),
+            )
+    except Exception:
+        logger.exception("Failed to render family banner for /api/ai.")
+
+    canvas.paste(sidebar, (image_width, 0))
+
+    # Display and record refresh info.
+    display_manager.display_image(canvas)
+    image_hash = compute_image_hash(canvas)
+    device_config.refresh_info = RefreshInfo(
+        refresh_type="API AI Temp",
+        plugin_id="api_ai",
+        refresh_time=now.isoformat(),
+        image_hash=image_hash,
+        playlist=getattr(playlist, "name", None),
+        plugin_instance=None,
+    )
+    device_config.write_config()
+
+    payload = _build_status_payload(now=now, include_image=include_image, include_image_base64=include_image_base64)
+    payload["action"] = {
+        "type": "ai",
+        "mode": "temporary",
+        "idea": idea,
+        "model": model,
+        "enhance": bool(enhance),
+        "style": style_hint or None,
+        "palette": palette,
+    }
+    return jsonify(payload)
