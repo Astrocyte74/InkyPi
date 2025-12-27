@@ -87,3 +87,16 @@ Notes:
 
 - This may trigger an AI image generation API call.
 - The new image becomes the “today” image and will be reused for the rest of the day unless rerolled again.
+
+## `POST /api/banner`
+
+Sets or clears the top banner override (same banner used by the Web UI + Telegram).
+
+Common usage:
+
+- Clear: `POST /api/banner?clear=1&image=0`
+- Set: `POST /api/banner?text=Merry%20Christmas!&image=0`
+
+Notes:
+
+- If the currently displayed slide is one that renders the banner (`daily_cat_weather` or `daily_theme_card`), InkyPi will refresh it immediately so you see the change right away.

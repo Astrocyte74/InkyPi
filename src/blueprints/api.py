@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from contextlib import nullcontext
 from datetime import time as dtime
 import re
+import pytz
 
 from flask import Blueprint, jsonify, request, current_app
 
@@ -95,6 +96,122 @@ def _human_ago(seconds: int) -> str:
     if seconds < 86400:
         return f"{seconds // 3600}h ago"
     return f"{seconds // 86400}d ago"
+
+
+def _set_banner_override_from_text(device_config, text: str) -> dict:
+    raw = (text or "").strip()
+    if not raw:
+        raise ValueError("Banner text is empty.")
+    parts = [p.strip() for p in raw.splitlines() if p.strip()]
+    headline = parts[0] if parts else raw
+    detail = ""
+    if len(parts) >= 2:
+        detail = " ".join(parts[1:]).strip()
+
+    headline = headline[:120].rstrip()
+    detail = detail[:180].rstrip()
+
+    tz_str = device_config.get_config("timezone", default="UTC")
+    try:
+        tz = pytz.timezone(tz_str)
+    except Exception:
+        tz = pytz.UTC
+    day = datetime.now(tz).date().isoformat()
+
+    cfg = device_config.get_config()
+    cfg["banner_override"] = {
+        "day": day,
+        "headline": headline,
+        "detail": detail,
+    }
+    device_config.update_config(cfg)
+    return cfg["banner_override"]
+
+
+def _clear_banner_override(device_config) -> bool:
+    cfg = device_config.get_config()
+    if "banner_override" not in cfg:
+        return False
+    cfg.pop("banner_override", None)
+    device_config.update_config(cfg)
+    return True
+
+
+def _mark_banner_consumers_stale(device_config, now: datetime) -> None:
+    try:
+        playlist_manager = device_config.get_playlist_manager()
+        playlist = playlist_manager.determine_active_playlist(now)
+    except Exception:
+        playlist = None
+
+    if not playlist or not getattr(playlist, "plugins", None):
+        return
+
+    changed = False
+    for plugin_instance in playlist.plugins:
+        if plugin_instance.plugin_id in {"daily_cat_weather", "daily_theme_card"}:
+            plugin_instance.latest_refresh_time = None
+            changed = True
+
+    if changed:
+        try:
+            device_config.write_config()
+        except Exception:
+            logger.exception("Failed to persist playlist after banner update.")
+
+
+def _refresh_current_banner_slide(*, device_config, display_manager, refresh_task, now: datetime) -> bool:
+    try:
+        refresh_info = device_config.get_refresh_info()
+    except Exception:
+        refresh_info = None
+
+    plugin_id = getattr(refresh_info, "plugin_id", None) if refresh_info else None
+    plugin_instance_name = getattr(refresh_info, "plugin_instance", None) if refresh_info else None
+    if plugin_id not in {"daily_cat_weather", "daily_theme_card"} or not plugin_instance_name:
+        return False
+
+    try:
+        playlist_manager = device_config.get_playlist_manager()
+        playlist = playlist_manager.determine_active_playlist(now)
+    except Exception:
+        playlist = None
+    if not playlist:
+        return False
+
+    plugin_instance = playlist.find_plugin(plugin_id, plugin_instance_name)
+    if not plugin_instance:
+        return False
+
+    if not getattr(refresh_task, "running", False):
+        return False
+
+    from plugins.plugin_registry import get_plugin_instance
+    from refresh_task import PlaylistRefresh
+    from utils.image_utils import compute_image_hash
+    from model import RefreshInfo
+
+    lock = getattr(refresh_task, "lock", None)
+    ctx = lock if lock is not None else nullcontext()
+
+    with ctx:
+        plugin_config = device_config.get_plugin(plugin_instance.plugin_id)
+        if not plugin_config:
+            return False
+        plugin = get_plugin_instance(plugin_config)
+        image = PlaylistRefresh(playlist, plugin_instance, force=True).execute(plugin, device_config, now)
+        display_manager.display_image(image, image_settings=plugin_config.get("image_settings", []))
+        image_hash = compute_image_hash(image)
+        device_config.refresh_info = RefreshInfo(
+            refresh_type="API Banner",
+            plugin_id=plugin_instance.plugin_id,
+            refresh_time=now.isoformat(),
+            image_hash=image_hash,
+            playlist=playlist.name,
+            plugin_instance=plugin_instance.name,
+        )
+        device_config.write_config()
+    return True
 
 
 def _format_in(seconds: int | None) -> str:
@@ -434,4 +551,66 @@ def cat_reroll():
         "reroll_nonce": plugin_instance.settings.get("rerollNonce"),
         "removed_cache_files": removed,
     }
+    return jsonify(payload)
+
+
+@api_bp.route("/banner", methods=["GET", "POST"])
+def banner():
+    """
+    Set or clear the top banner override (Shortcuts-friendly).
+
+    - POST /api/banner?text=Hello
+    - POST /api/banner?clear=1
+    """
+    if not _require_token():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    include_image = str(request.args.get("image", "1")).strip().lower() not in {"0", "false", "no"}
+    include_image_base64 = str(request.args.get("format", "base64")).strip().lower() in {"base64", "b64", "json"}
+
+    device_config = current_app.config["DEVICE_CONFIG"]
+    display_manager = current_app.config["DISPLAY_MANAGER"]
+    refresh_task = current_app.config.get("REFRESH_TASK")
+
+    now = None
+    try:
+        now = refresh_task._get_current_datetime() if refresh_task and hasattr(refresh_task, "_get_current_datetime") else None
+    except Exception:
+        now = None
+    if now is None:
+        now = datetime.utcnow()
+
+    data = request.get_json(silent=True) if request.method == "POST" else None
+    clear_raw = request.args.get("clear")
+    clear = False
+    if clear_raw is not None:
+        clear = str(clear_raw).strip().lower() in {"1", "true", "yes", "on"}
+    elif isinstance(data, dict) and "clear" in data:
+        clear = bool(data.get("clear"))
+
+    action = {"type": "banner"}
+    if clear:
+        removed = _clear_banner_override(device_config)
+        action.update({"op": "clear", "removed": bool(removed)})
+    else:
+        text = request.args.get("text")
+        if text is None and isinstance(data, dict):
+            text = data.get("text")
+        text = (text or "").strip()
+        if not text:
+            return jsonify({"error": "Missing 'text' (or use clear=1)."}), 400
+        override = _set_banner_override_from_text(device_config, text)
+        action.update({"op": "set", "headline": override.get("headline"), "detail": override.get("detail")})
+
+    _mark_banner_consumers_stale(device_config, now)
+    refreshed = _refresh_current_banner_slide(
+        device_config=device_config,
+        display_manager=display_manager,
+        refresh_task=refresh_task,
+        now=now,
+    )
+    action["refreshed"] = bool(refreshed)
+
+    payload = _build_status_payload(now=now, include_image=include_image, include_image_base64=include_image_base64)
+    payload["action"] = action
     return jsonify(payload)
