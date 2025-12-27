@@ -99,4 +99,6 @@ Common usage:
 
 Notes:
 
-- If the currently displayed slide is one that renders the banner (`daily_cat_weather` or `daily_theme_card`), InkyPi will refresh it immediately so you see the change right away.
+- By default, the API returns quickly and the banner will appear/disappear on the next cycle.
+- Optional: `refresh=1` queues an immediate refresh (async) if the current slide renders the banner:
+  - `POST /api/banner?clear=1&refresh=1&image=0`

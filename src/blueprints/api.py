@@ -8,6 +8,7 @@ from contextlib import nullcontext
 from datetime import time as dtime
 import re
 import pytz
+import threading
 
 from flask import Blueprint, jsonify, request, current_app
 
@@ -603,13 +604,33 @@ def banner():
         action.update({"op": "set", "headline": override.get("headline"), "detail": override.get("detail")})
 
     _mark_banner_consumers_stale(device_config, now)
-    refreshed = _refresh_current_banner_slide(
-        device_config=device_config,
-        display_manager=display_manager,
-        refresh_task=refresh_task,
-        now=now,
-    )
-    action["refreshed"] = bool(refreshed)
+
+    refresh_raw = request.args.get("refresh")
+    refresh_now = False
+    if refresh_raw is not None:
+        refresh_now = str(refresh_raw).strip().lower() in {"1", "true", "yes", "on"}
+    elif isinstance(data, dict) and "refresh" in data:
+        refresh_now = bool(data.get("refresh"))
+
+    # IMPORTANT: Refreshing the current slide can take a long time on real e-ink hardware.
+    # Keep the API responsive by default; allow optional async refresh.
+    action["refresh_requested"] = bool(refresh_now)
+    action["refreshed"] = False
+    action["refresh_queued"] = False
+    if refresh_now:
+        def _worker():
+            try:
+                _refresh_current_banner_slide(
+                    device_config=device_config,
+                    display_manager=display_manager,
+                    refresh_task=refresh_task,
+                    now=now,
+                )
+            except Exception:
+                logger.exception("API banner refresh worker failed.")
+
+        threading.Thread(target=_worker, name="ApiBannerRefresh", daemon=True).start()
+        action["refresh_queued"] = True
 
     payload = _build_status_payload(now=now, include_image=include_image, include_image_base64=include_image_base64)
     payload["action"] = action
