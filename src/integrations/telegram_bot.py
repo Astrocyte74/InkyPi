@@ -526,10 +526,26 @@ class TelegramBotListener:
                 return
             if arg.lower() == "clear":
                 self._clear_banner_override()
-                self._send_message(chat_id, "Banner cleared (family banner will be used if applicable).")
+                current_dt = (
+                    self.refresh_task._get_current_datetime()
+                    if hasattr(self.refresh_task, "_get_current_datetime")
+                    else datetime.utcnow()
+                )
+                self._mark_banner_consumers_stale(current_dt)
+                refreshed = self._refresh_current_banner_slide(current_dt)
+                suffix = " (refreshed)" if refreshed else " (will update on next cycle)"
+                self._send_message(chat_id, f"Banner cleared (family banner will be used if applicable).{suffix}")
                 return
             self._set_banner_override_from_text(arg)
-            self._send_message(chat_id, "Banner set for today. It will appear on the next refresh.")
+            current_dt = (
+                self.refresh_task._get_current_datetime()
+                if hasattr(self.refresh_task, "_get_current_datetime")
+                else datetime.utcnow()
+            )
+            self._mark_banner_consumers_stale(current_dt)
+            refreshed = self._refresh_current_banner_slide(current_dt)
+            suffix = " (refreshed)" if refreshed else " (will update on next cycle)"
+            self._send_message(chat_id, f"Banner set for today.{suffix}")
         elif re.match(r"^/t(?:\s|$)", text.strip(), flags=re.IGNORECASE):
             match = re.match(r"^/t(?:\s+(.*))?$", text.strip(), flags=re.IGNORECASE)
             arg = (match.group(1) or "").strip() if match else ""
@@ -1105,6 +1121,21 @@ class TelegramBotListener:
             param = parts[3] if len(parts) > 3 else None
             request = self.text_flow.get_request(request_id)
             if not request:
+                # Allow clearing the global banner even if the /txt request has expired.
+                if action == "banner" and param == "clear":
+                    try:
+                        self._clear_banner_override()
+                        current_dt = (
+                            self.refresh_task._get_current_datetime()
+                            if hasattr(self.refresh_task, "_get_current_datetime")
+                            else datetime.utcnow()
+                        )
+                        self._mark_banner_consumers_stale(current_dt)
+                        self._refresh_current_banner_slide(current_dt)
+                    except Exception:
+                        logger.exception("Failed to clear banner override from expired /txt request.")
+                    self._answer_callback(callback_query["id"], text="Banner cleared.")
+                    return
                 self._answer_callback(callback_query["id"], text="Text request expired.")
                 return
 
@@ -1273,7 +1304,19 @@ class TelegramBotListener:
                             text_value = request.get("text") or ""
                     try:
                         self._set_banner_override_from_text(text_value)
-                        self._refresh_text_message(request, status="Banner set for today (shows on next refresh).")
+                        current_dt = (
+                            self.refresh_task._get_current_datetime()
+                            if hasattr(self.refresh_task, "_get_current_datetime")
+                            else datetime.utcnow()
+                        )
+                        self._mark_banner_consumers_stale(current_dt)
+                        refreshed = self._refresh_current_banner_slide(current_dt)
+                        status = (
+                            "Banner set for today (refreshed)."
+                            if refreshed
+                            else "Banner set for today (shows on next cycle)."
+                        )
+                        self._refresh_text_message(request, status=status)
                         self._answer_callback(callback_query["id"], text="Banner set.")
                     except Exception as exc:
                         logger.exception("Failed to set banner override: %s", exc)
@@ -1281,7 +1324,19 @@ class TelegramBotListener:
                 elif param == "clear":
                     try:
                         self._clear_banner_override()
-                        self._refresh_text_message(request, status="Banner cleared (family banner will be used if applicable).")
+                        current_dt = (
+                            self.refresh_task._get_current_datetime()
+                            if hasattr(self.refresh_task, "_get_current_datetime")
+                            else datetime.utcnow()
+                        )
+                        self._mark_banner_consumers_stale(current_dt)
+                        refreshed = self._refresh_current_banner_slide(current_dt)
+                        status = (
+                            "Banner cleared (family banner will be used if applicable) (refreshed)."
+                            if refreshed
+                            else "Banner cleared (family banner will be used if applicable) (will update on next cycle)."
+                        )
+                        self._refresh_text_message(request, status=status)
                     except Exception:
                         logger.exception("Failed to clear banner override")
                     self._answer_callback(callback_query["id"], text="Banner cleared.")
@@ -2201,6 +2256,70 @@ class TelegramBotListener:
         if "banner_override" in cfg:
             cfg.pop("banner_override", None)
             self.device_config.update_config(cfg)
+
+    def _mark_banner_consumers_stale(self, current_dt: datetime) -> None:
+        """
+        Ensure slides that bake in the banner regenerate next time they are shown.
+
+        Many plugins render the banner directly into the generated image. If the playlist
+        decides "not time to refresh", it will reuse the last rendered PNG from disk
+        (which still contains the old banner). Marking these instances stale forces a
+        re-render the next time they come up in the playlist cycle.
+        """
+        try:
+            playlist_manager = self.device_config.get_playlist_manager()
+            playlist = playlist_manager.determine_active_playlist(current_dt)
+        except Exception:
+            playlist = None
+
+        if not playlist or not getattr(playlist, "plugins", None):
+            return
+
+        changed = False
+        for plugin_instance in playlist.plugins:
+            if plugin_instance.plugin_id in {"daily_cat_weather", "daily_theme_card"}:
+                plugin_instance.latest_refresh_time = None
+                changed = True
+
+        if changed:
+            try:
+                self.device_config.write_config()
+            except Exception:
+                logger.exception("Failed to persist playlist after banner update.")
+
+    def _refresh_current_banner_slide(self, current_dt: datetime) -> bool:
+        """If the currently displayed slide uses the banner, force a refresh immediately."""
+        try:
+            refresh_info = self.device_config.get_refresh_info()
+        except Exception:
+            refresh_info = None
+
+        plugin_id = getattr(refresh_info, "plugin_id", None) if refresh_info else None
+        plugin_instance_name = getattr(refresh_info, "plugin_instance", None) if refresh_info else None
+        if plugin_id not in {"daily_cat_weather", "daily_theme_card"} or not plugin_instance_name:
+            return False
+
+        try:
+            playlist_manager = self.device_config.get_playlist_manager()
+            playlist = playlist_manager.determine_active_playlist(current_dt)
+        except Exception:
+            playlist = None
+        if not playlist:
+            return False
+
+        plugin_instance = playlist.find_plugin(plugin_id, plugin_instance_name)
+        if not plugin_instance:
+            return False
+
+        if not getattr(self.refresh_task, "running", False):
+            return False
+
+        try:
+            self.refresh_task.manual_update(PlaylistRefresh(playlist, plugin_instance, force=True))
+            return True
+        except Exception:
+            logger.exception("Failed to refresh current slide after banner update.")
+            return False
 
     def _set_banner_override_from_text(self, text: str) -> None:
         raw = (text or "").strip()
