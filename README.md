@@ -91,6 +91,7 @@ After the installation is complete, the script will prompt you to reboot your Ra
 Note: 
 - The installation script requires sudo privileges to install and run the service. We recommend starting with a fresh installation of Raspberry Pi OS to avoid potential conflicts with existing software or configurations.
 - The installation process will automatically enable the required SPI and I2C interfaces on your Raspberry Pi.
+- For secure remote SSH access without exposing port 22, see `docs/tailscale.md`.
 
 For more details, including instructions on how to image your microSD with Raspberry Pi OS, refer to [installation.md](./docs/installation.md). You can also check out [this YouTube tutorial](https://youtu.be/L5PvQj1vfC4).
 

@@ -40,6 +40,12 @@ journalctl -u inkypi -f
 sudo systemctl restart inkypi.service
 ```
 
+## Remote Access (Tailscale)
+
+If you want secure remote SSH access without exposing port 22 to the public internet, use Tailscale (WireGuard-based VPN).
+
+See `docs/tailscale.md`.
+
 
 ## Run InkyPi Manually
 

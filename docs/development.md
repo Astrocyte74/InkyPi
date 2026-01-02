@@ -58,3 +58,9 @@ deactivate                           # Exit virtual environment
 2. Click "Display" button
 3. Check `mock_display_output/latest.png` for result
 4. Iterate quickly without deployment
+
+## Claude Code (z.ai GLM)
+
+For detailed setup and configuration of Claude Code with GLM on Raspberry Pi Zero 2 W
+(including memory tuning, MCP management, and health checks), see
+[Claude GLM Pi Setup](claude-glm-pi-setup.md).

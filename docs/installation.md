@@ -30,3 +30,4 @@ If you are browsing the repository on GitHub, use the "Raw" or "Download" button
 - `docs/api_keys.md` for required environment keys.
 - `docs/troubleshooting.md` for common issues and log commands.
 - `docs/development.md` for running the Flask app locally with the mock display.
+- `docs/tailscale.md` for secure remote access (WireGuard VPN + SSH) without opening ports.
