@@ -1,0 +1,336 @@
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+<div class="form-group">
+    <label class="form-label">Location: </label>
+    <div class="form-group">
+        <span>Latitude </span>
+        <input type="text" id="latitude" name="latitude" class="form-input" inputmode="decimal" />
+    </div>
+    <div class="form-group">
+        <span>Longitude </span>
+        <input type="text" id="longitude" name="longitude" class="form-input" inputmode="decimal" />
+    </div>
+    <button type="button" id="openMap" class="action-button compact">Select Location</button>
+</div>
+
+<div class="form-group">
+    <label for="savedLocations" class="form-label">Saved Locations:</label>
+    <div class="form-group nowrap">
+        <select id="savedLocations" class="form-input"></select>
+        <button type="button" id="applySavedLocation" class="action-button compact">Use</button>
+    </div>
+    <div class="form-group nowrap" style="margin-top: 8px;">
+        <button type="button" id="saveCurrentLocation" class="action-button compact">Save Current</button>
+        <button type="button" id="deleteSavedLocation" class="action-button compact">Delete Selected</button>
+    </div>
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Saved in your browser so you can re-select instantly without panning the world map.
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="locationLabel" class="form-label">Location Label (optional):</label>
+    <input type="text" id="locationLabel" name="locationLabel" placeholder="Carstairs, AB" class="form-input">
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Displayed at the top of the weather sidebar.
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="units" class="form-label">Units:</label>
+    <select id="units" name="units" class="form-input">
+        <option value="imperial">Imperial (°F)</option>
+        <option value="metric">Metric (°C)</option>
+        <option value="standard">Standard (K)</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="dailyRefreshTime" class="form-label">New Quote Time (local):</label>
+    <input id="dailyRefreshTime" class="time-input" type="time" name="dailyRefreshTime" step="300">
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Picks a new quote once per day at this time; weather overlay can refresh more frequently.
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="forecastDays" class="form-label">Forecast Days:</label>
+    <select id="forecastDays" name="forecastDays" class="form-input">
+        <option value="3">3</option>
+        <option value="5">5</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="weatherCacheMinutes" class="form-label">Weather Cache (minutes):</label>
+    <input type="number" id="weatherCacheMinutes" name="weatherCacheMinutes" class="form-input" min="0" max="1440" step="5" value="30">
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Weather is cached per location to reduce API calls. Set to <code>0</code> to disable caching.
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="backgroundMode" class="form-label">Card Background:</label>
+    <select id="backgroundMode" name="backgroundMode" class="form-input">
+        <option value="plain">Plain</option>
+        <option value="illustration">Use Illustration (no blur)</option>
+        <option value="illustration_blur">Use Illustration (blurred)</option>
+    </select>
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        Uses the latest Daily Cat illustration (left panel) as the card background. If not found, falls back to plain.
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="illustrationCacheId" class="form-label">Illustration Cache ID (optional):</label>
+    <input type="text" id="illustrationCacheId" name="illustrationCacheId" placeholder="default" class="form-input">
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        If blank, uses the most recent cached illustration. Use this if you maintain multiple Daily Cat cache IDs.
+    </div>
+</div>
+
+<div class="form-group">
+    <label class="form-label">About Come, Follow Me 2026:</label>
+    <div style="font-size: 0.9em; opacity: 0.8; margin-top: 6px;">
+        This plugin displays weekly quotes from the <strong>Old Testament 2026</strong> "Come, Follow Me" curriculum.
+        The current week is detected automatically based on the date. Lesson data is loaded from:
+        <code>src/plugins/cfm_2026/data/</code>
+    </div>
+</div>
+
+<div id="mapModal" class="modal">
+    <div class="modal-content">
+        <span class="close-button" onclick="closeModal('mapModal')">×</span>
+        <h2 id="modalTitle">Select Location</h2>
+        <div class="separator"></div>
+        <div id="map" style="width: 100%; height: 200px; margin: 10px 0px;"></div>
+        <button id="closeMap" class="action-button">Save</button>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const OSM_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+        const $latitude = document.querySelector('#latitude');
+        const $longitude = document.querySelector('#longitude');
+        const $openMap = document.querySelector('#openMap');
+        const $closeMap = document.querySelector('#closeMap');
+        const $locationLabel = document.querySelector('#locationLabel');
+
+        const $savedLocations = document.querySelector('#savedLocations');
+        const $applySavedLocation = document.querySelector('#applySavedLocation');
+        const $saveCurrentLocation = document.querySelector('#saveCurrentLocation');
+        const $deleteSavedLocation = document.querySelector('#deleteSavedLocation');
+
+        const STORAGE_KEY = 'inkypi.saved_locations';
+        const LEGACY_STORAGE_KEY = 'inkypi.cfm_2026.saved_locations';
+
+        let map, marker;
+
+        function parseFloatOrNull(value) {
+            const n = parseFloat((value || '').toString().trim());
+            return Number.isFinite(n) ? n : null;
+        }
+
+        function currentCoords() {
+            return {
+                lat: parseFloatOrNull($latitude.value),
+                lon: parseFloatOrNull($longitude.value),
+            };
+        }
+
+        function normalizeLocations(locations) {
+            const cleaned = [];
+            const seen = new Set();
+            (locations || []).forEach(item => {
+                if (!item) return;
+                const label = (item.label || '').toString().trim();
+                const lat = parseFloatOrNull(item.lat);
+                const lon = parseFloatOrNull(item.lon);
+                if (!label || lat === null || lon === null) return;
+                const key = `${label}|${lat.toFixed(6)}|${lon.toFixed(6)}`;
+                if (seen.has(key)) return;
+                seen.add(key);
+                cleaned.push({ label, lat, lon });
+            });
+            return cleaned;
+        }
+
+        function loadLocationsFromKey(key) {
+            try {
+                const raw = localStorage.getItem(key);
+                const parsed = raw ? JSON.parse(raw) : [];
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function loadSavedLocations() {
+            const merged = [
+                ...loadLocationsFromKey(STORAGE_KEY),
+                ...loadLocationsFromKey(LEGACY_STORAGE_KEY),
+            ];
+            return normalizeLocations(merged);
+        }
+
+        function saveSavedLocations(locations) {
+            const normalized = normalizeLocations(locations);
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+            } catch (e) {
+                // ignore storage errors
+            }
+            try {
+                localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(normalized));
+            } catch (e) {
+                // ignore
+            }
+        }
+
+        function renderSavedLocations() {
+            const locations = normalizeLocations(loadSavedLocations());
+            $savedLocations.innerHTML = '';
+
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = locations.length ? 'Select…' : 'No saved locations';
+            $savedLocations.appendChild(placeholder);
+
+            locations.forEach((loc, idx) => {
+                const opt = document.createElement('option');
+                opt.value = String(idx);
+                opt.textContent = `${loc.label} (${loc.lat.toFixed(3)}, ${loc.lon.toFixed(3)})`;
+                $savedLocations.appendChild(opt);
+            });
+        }
+
+        function applyLocation(loc) {
+            if (!loc) return;
+            $latitude.value = Number(loc.lat).toFixed(6);
+            $longitude.value = Number(loc.lon).toFixed(6);
+            if ($locationLabel && (!$locationLabel.value || !$locationLabel.value.trim())) {
+                $locationLabel.value = (loc.label || '').toString();
+            }
+        }
+
+        function ensureMap() {
+            if (map) return;
+
+            const coords = currentCoords();
+            const initLat = coords.lat ?? 51.048615;
+            const initLon = coords.lon ?? -114.070846;
+            const initZoom = coords.lat !== null && coords.lon !== null ? 10 : 4;
+
+            map = L.map('map').setView([initLat, initLon], initZoom);
+            L.tileLayer(OSM_TILE_URL, {
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(map);
+
+            marker = L.marker([initLat, initLon], { draggable: true }).addTo(map);
+            marker.on('dragend', () => {
+                const position = marker.getLatLng().wrap();
+                $latitude.value = position.lat.toFixed(6);
+                $longitude.value = position.lng.toFixed(6);
+            });
+
+            map.on('click', (event) => {
+                const position = event.latlng.wrap();
+                marker.setLatLng(position);
+                $latitude.value = position.lat.toFixed(6);
+                $longitude.value = position.lng.toFixed(6);
+            });
+        }
+
+        $openMap.addEventListener('click', () => {
+            openModal('mapModal');
+            ensureMap();
+            setTimeout(() => {
+                try { map.invalidateSize(); } catch (e) { /* ignore */ }
+            }, 100);
+        });
+
+        $closeMap.addEventListener('click', () => {
+            if (!marker) {
+                closeModal('mapModal');
+                return;
+            }
+            const position = marker.getLatLng().wrap();
+            $latitude.value = position.lat.toFixed(6);
+            $longitude.value = position.lng.toFixed(6);
+            closeModal('mapModal');
+        });
+
+        $applySavedLocation.addEventListener('click', () => {
+            const idx = parseInt($savedLocations.value, 10);
+            if (!Number.isFinite(idx)) return;
+            const locations = normalizeLocations(loadSavedLocations());
+            applyLocation(locations[idx]);
+        });
+
+        $saveCurrentLocation.addEventListener('click', () => {
+            const coords = currentCoords();
+            if (coords.lat === null || coords.lon === null) return;
+            const label = ($locationLabel?.value || '').trim() || 'Saved location';
+            const locations = normalizeLocations(loadSavedLocations());
+            locations.unshift({ label, lat: coords.lat, lon: coords.lon });
+            saveSavedLocations(normalizeLocations(locations));
+            renderSavedLocations();
+            $savedLocations.value = '0';
+        });
+
+        $deleteSavedLocation.addEventListener('click', () => {
+            const idx = parseInt($savedLocations.value, 10);
+            if (!Number.isFinite(idx)) return;
+            const locations = normalizeLocations(loadSavedLocations());
+            locations.splice(idx, 1);
+            saveSavedLocations(locations);
+            renderSavedLocations();
+        });
+
+        if (loadPluginSettings) {
+            document.getElementById('latitude').value = pluginSettings.latitude || '';
+            document.getElementById('longitude').value = pluginSettings.longitude || '';
+            document.getElementById('locationLabel').value = pluginSettings.locationLabel || '';
+            document.getElementById('units').value = pluginSettings.units || 'metric';
+            document.getElementById('dailyRefreshTime').value = pluginSettings.dailyRefreshTime || '04:00';
+            document.getElementById('forecastDays').value = pluginSettings.forecastDays || '3';
+            document.getElementById('weatherCacheMinutes').value = parseInt((pluginSettings.weatherCacheMinutes || '30').toString(), 10) || 30;
+            document.getElementById('backgroundMode').value = (pluginSettings.backgroundMode || 'plain').toLowerCase();
+            document.getElementById('illustrationCacheId').value = pluginSettings.illustrationCacheId || '';
+        } else {
+            document.getElementById('latitude').value = '';
+            document.getElementById('longitude').value = '';
+            document.getElementById('locationLabel').value = '';
+            document.getElementById('units').value = 'metric';
+            document.getElementById('dailyRefreshTime').value = '04:00';
+            document.getElementById('forecastDays').value = '3';
+            document.getElementById('weatherCacheMinutes').value = 30;
+            document.getElementById('backgroundMode').value = 'plain';
+            document.getElementById('illustrationCacheId').value = '';
+        }
+
+        // Migrate any legacy locations into the shared key.
+        saveSavedLocations(loadSavedLocations());
+        renderSavedLocations();
+
+        // Auto-save the current configured location once (if present) to avoid ever panning from (0,0).
+        try {
+            const coords = currentCoords();
+            const label = ($locationLabel?.value || '').trim();
+            if (label && coords.lat !== null && coords.lon !== null) {
+                const existing = normalizeLocations(loadSavedLocations());
+                const key = `${label}|${coords.lat.toFixed(6)}|${coords.lon.toFixed(6)}`;
+                const has = existing.some(l => `${l.label}|${l.lat.toFixed(6)}|${l.lon.toFixed(6)}` === key);
+                if (!has) {
+                    existing.unshift({ label, lat: coords.lat, lon: coords.lon });
+                    saveSavedLocations(normalizeLocations(existing));
+                    renderSavedLocations();
+                }
+            }
+        } catch (e) {
+            // ignore
+        }
+    });
+</script>
