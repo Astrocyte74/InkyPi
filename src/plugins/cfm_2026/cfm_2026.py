@@ -27,6 +27,8 @@ DAILY_REFRESH_TIME_DEFAULT = "04:00"
 
 
 class Cfm2026(BasePlugin):
+    _PER_REFRESH_COUNTER: dict[str, int] = {}
+
     def generate_settings_template(self):
         template_params = super().generate_settings_template()
         template_params["api_key"] = {
@@ -113,8 +115,8 @@ class Cfm2026(BasePlugin):
         # Load the current week's data
         week_data = self._load_week_data(now)
         week_number = week_data.get("id", "")
-        # Simplify title: "Come, Follow Me - Old Testament" (remove year)
-        title = "Come, Follow Me - Old Testament"
+        # No title header - quote speaks for itself (like Daily Theme Card)
+        title = ""
         subtitle = ""
         items = week_data.get("items", [])
 
@@ -238,14 +240,22 @@ class Cfm2026(BasePlugin):
         }
 
     @classmethod
+    def _per_refresh_bucket(cls, *, week_id: str, day_key: str) -> int:
+        """Get a counter that increments on each refresh for this week/day."""
+        seed = f"{week_id}|{day_key}"
+        key = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+        cls._PER_REFRESH_COUNTER[key] = cls._PER_REFRESH_COUNTER.get(key, -1) + 1
+        return cls._PER_REFRESH_COUNTER[key]
+
+    @classmethod
     def _pick_quote(cls, items, week_id, day_key):
-        """Pick a quote based on the day key (consistent selection per day)."""
+        """Pick a quote that cycles through on each refresh."""
         if not items or not isinstance(items, list):
             return {"text": "No items configured.", "attribution": ""}
 
-        # Use day_key + week_id to pick consistently for each day
-        seed = f"{week_id}|{day_key}"
-        idx = int(hashlib.sha256(seed.encode("utf-8")).hexdigest(), 16) % len(items)
+        # Use per-refresh bucket to cycle through all quotes
+        bucket = cls._per_refresh_bucket(week_id=week_id, day_key=day_key)
+        idx = bucket % len(items)
         return items[idx]
 
     @classmethod
@@ -341,8 +351,6 @@ class Cfm2026(BasePlugin):
         content_x = pad + card_pad
         content_max_w = w - (content_x * 2)
 
-        body_size = max(16, int(w * 0.075))
-        body_font = self._font("Jost", body_size)
         small_font = self._font("Jost", max(12, int(w * 0.05)))
 
         def text_bbox(text, font_obj):
@@ -379,6 +387,47 @@ class Cfm2026(BasePlugin):
             lines.append(current)
             return lines
 
+        # Draw "Come, Follow Me" title pill at the top (will be covered by banner if present)
+        title_pill_text = "Come, Follow Me"
+        title_pill_font = self._font("Jost", max(12, int(w * 0.045)), bold=True)
+        title_pill_pad = max(8, int(w * 0.025))
+        title_pill_height = line_height(title_pill_font) + title_pill_pad * 2
+
+        title_pill_tb = text_bbox(title_pill_text, title_pill_font)
+        title_pill_w = title_pill_tb[2] - title_pill_tb[0] + title_pill_pad * 2
+        title_pill_x = (w - title_pill_w) // 2
+        title_pill_y = max(6, int(w * 0.015))
+
+        # Draw pill background
+        overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        od = ImageDraw.Draw(overlay)
+        radius = max(6, int(title_pill_height * 0.4))
+        try:
+            od.rounded_rectangle(
+                (title_pill_x, title_pill_y, title_pill_x + title_pill_w, title_pill_y + title_pill_height),
+                radius=radius,
+                fill=(255, 255, 255, 220),
+                outline=(0, 0, 0, 80),
+                width=1,
+            )
+        except Exception:
+            od.rectangle(
+                (title_pill_x, title_pill_y, title_pill_x + title_pill_w, title_pill_y + title_pill_height),
+                fill=(255, 255, 255, 220),
+            )
+        img_rgba = img.convert("RGBA")
+        img_rgba.alpha_composite(overlay)
+        img = img_rgba.convert("RGB")
+        draw = ImageDraw.Draw(img)
+
+        # Draw title text centered in pill
+        title_text_x = title_pill_x + title_pill_pad
+        title_text_y = title_pill_y + title_pill_pad
+        draw.text((title_text_x, title_text_y), title_pill_text, fill=(0, 0, 0), font=title_pill_font)
+
+        # Reserve space for title pill (banner will overlay this if present)
+        title_pill_reserve = title_pill_y + title_pill_height + max(6, int(w * 0.015))
+
         def draw_card_box(y0, total_h):
             """Draw a white rounded rectangle card behind the quote."""
             x0 = pad
@@ -396,16 +445,21 @@ class Cfm2026(BasePlugin):
             img_rgba.alpha_composite(overlay)
             return img_rgba.convert("RGB")
 
-        # Title fonts (smaller, for header in card)
-        title_font = self._font("Jost", max(14, int(w * 0.055)), bold=True)
+        # Smart initial font size based on character count
+        # Short quotes get larger fonts, long quotes start smaller
+        char_count = len(text)
+        base_size = max(16, int(w * 0.075))
+        if char_count > 200:
+            # Reduce font size for longer quotes (every 120 chars over 200 = 1px smaller)
+            reduction = (char_count - 200) // 120
+            body_size = max(QUOTE_MIN_BODY_FONT_SIZE, base_size - reduction)
+        else:
+            body_size = base_size
+        body_font = self._font("Jost", body_size)
 
-        # Fit body font to available space (account for title at top)
-        title_h = line_height(title_font) + int(pad * 0.3) if title else 0
-        separator_h = int(pad * 0.2) if title else 0
-        header_h = title_h + separator_h
-
-        max_body_h = int(h * 0.70) - header_h
-        for _ in range(8):
+        # Fit body font to available space (title pill is at top, not in card)
+        max_body_h = int(h * 0.70)
+        for _ in range(12):  # More iterations for better fit
             body_lines = wrap(text, body_font, content_max_w)
             body_h = len(body_lines) * line_height(body_font)
             footer_h = (line_height(small_font) * (2 if attribution else 1)) + int(pad * 0.7)
@@ -421,16 +475,16 @@ class Cfm2026(BasePlugin):
         if quote_lines:
             quote_lines[-1] = f"{quote_lines[-1]}"
 
-        # Calculate total height (including title)
+        # Calculate total height (no title in card, it's at top in pill)
         line_gap = int(max(2, pad * 0.08))
         body_h = len(quote_lines) * (line_height(body_font) + line_gap)
         attr_h = 0
         if attribution:
             attr_h = int(pad * 0.4) + line_height(small_font)
-        total_h = header_h + body_h + attr_h
+        total_h = body_h + attr_h
 
-        # Center the card vertically in the panel (accounting for banner)
-        top_limit = max(pad, int(reserve_top_px or 0))
+        # Center the card vertically in the panel (accounting for title pill and banner)
+        top_limit = max(pad, title_pill_reserve, int(reserve_top_px or 0))
         available_h = h - top_limit - pad
         y = top_limit + max(pad, int((available_h - total_h) / 2))
 
@@ -444,17 +498,6 @@ class Cfm2026(BasePlugin):
         content_left = content_x
         content_right = w - content_x
         inner_w = max(1, content_right - content_left)
-
-        # Draw title at top of card
-        if title:
-            title_x = content_left + max(0, int((inner_w - text_width(title, title_font)) / 2))
-            draw.text((title_x, y), title, fill=(0, 0, 0), font=title_font)
-            y += line_height(title_font) + int(pad * 0.15)
-
-            # Draw separator line
-            sep_y = y
-            draw.line((content_left, sep_y, content_right - 1, sep_y), fill=(180, 180, 180), width=1)
-            y += separator_h
 
         for line in quote_lines:
             x = content_left + max(0, int((inner_w - text_width(line, body_font)) / 2))

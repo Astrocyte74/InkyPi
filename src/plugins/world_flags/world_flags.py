@@ -363,6 +363,25 @@ class WorldFlags(BasePlugin):
         flag_region = (pad, pad, w - pad, pad + flag_h)
         info_region = (pad, pad + flag_h + gap_y, w - pad, pad + flag_h + gap_y + info_h)
 
+        # Flag background box (darker gray for better contrast with white flag elements on e-ink)
+        fr = max(10, int(min(flag_region[2] - flag_region[0], flag_region[3] - flag_region[1]) * 0.04))
+        bg_overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        bg_draw = ImageDraw.Draw(bg_overlay)
+        try:
+            bg_draw.rounded_rectangle(
+                flag_region,
+                radius=fr,
+                fill=(140, 140, 140, 255),  # Darker gray background for e-ink contrast
+                outline=(0, 0, 0, 255),  # Solid black border for maximum visibility
+                width=3,  # Thicker border
+            )
+        except Exception:
+            bg_draw.rectangle(flag_region, fill=(140, 140, 140, 255), outline=(0, 0, 0))
+        img_rgba = img.convert("RGBA")
+        img_rgba.alpha_composite(bg_overlay)
+        img = img_rgba.convert("RGB")
+        draw = ImageDraw.Draw(img)
+
         # Flag image
         try:
             with Image.open(entry.png_path) as im:
@@ -378,18 +397,6 @@ class WorldFlags(BasePlugin):
             fx = flag_region[0] + (fw - fitted.size[0]) // 2
             fy = flag_region[1] + (fh - fitted.size[1]) // 2
             img.paste(fitted, (fx, fy))
-
-        # Flag frame (subtle)
-        fr = max(10, int(min(flag_region[2] - flag_region[0], flag_region[3] - flag_region[1]) * 0.04))
-        try:
-            draw.rounded_rectangle(
-                (flag_region[0], flag_region[1], flag_region[2], flag_region[3]),
-                radius=fr,
-                outline=(0, 0, 0, 70),
-                width=2,
-            )
-        except Exception:
-            draw.rectangle((flag_region[0], flag_region[1], flag_region[2], flag_region[3]), outline=(0, 0, 0))
 
         # Info box
         ix0, iy0, ix1, iy1 = info_region
