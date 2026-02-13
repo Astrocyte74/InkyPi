@@ -353,36 +353,44 @@ class WorldFlags(BasePlugin):
         img = Image.new("RGB", (w, h), (255, 255, 255))
         draw = ImageDraw.Draw(img)
 
-        pad = max(14, int(w * 0.03))
-        gap_y = max(12, int(h * 0.03))
-        inner_h = max(10, h - (pad * 2) - gap_y)
-        flag_h = int(inner_h * 0.62)
-        flag_h = max(10, min(inner_h - 10, flag_h))
-        info_h = max(10, inner_h - flag_h)
+        # Unified frame layout - single border around flag + info
+        frame_pad = max(12, int(w * 0.025))
+        frame_border = 4  # Thicker border for e-ink visibility
 
-        flag_region = (pad, pad, w - pad, pad + flag_h)
-        info_region = (pad, pad + flag_h + gap_y, w - pad, pad + flag_h + gap_y + info_h)
+        # Inner content area (accounting for frame border)
+        inner_x0 = frame_pad
+        inner_y0 = frame_pad
+        inner_x1 = w - frame_pad
+        inner_y1 = h - frame_pad
+        inner_w = inner_x1 - inner_x0
+        inner_h = inner_y1 - inner_y0
 
-        # Flag background box (darker gray for better contrast with white flag elements on e-ink)
-        fr = max(10, int(min(flag_region[2] - flag_region[0], flag_region[3] - flag_region[1]) * 0.04))
-        bg_overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        bg_draw = ImageDraw.Draw(bg_overlay)
-        try:
-            bg_draw.rounded_rectangle(
-                flag_region,
-                radius=fr,
-                fill=(140, 140, 140, 255),  # Darker gray background for e-ink contrast
-                outline=(0, 0, 0, 255),  # Solid black border for maximum visibility
-                width=3,  # Thicker border
-            )
-        except Exception:
-            bg_draw.rectangle(flag_region, fill=(140, 140, 140, 255), outline=(0, 0, 0))
-        img_rgba = img.convert("RGBA")
-        img_rgba.alpha_composite(bg_overlay)
-        img = img_rgba.convert("RGB")
-        draw = ImageDraw.Draw(img)
+        # Calculate flag and info sections within the unified frame
+        flag_h = int(inner_h * 0.65)  # Flag takes 65% of height
+        info_h = inner_h - flag_h
+        divider_y = inner_y0 + flag_h
 
-        # Flag image
+        # Draw the unified frame (single border around everything)
+        frame_rect = (inner_x0, inner_y0, inner_x1, inner_y1)
+        draw.rectangle(frame_rect, outline=(0, 0, 0), width=frame_border)
+
+        # Draw divider line between flag and info
+        divider_pad = frame_border + 4
+        draw.line(
+            [(inner_x0 + divider_pad, divider_y), (inner_x1 - divider_pad, divider_y)],
+            fill=(0, 0, 0),
+            width=2
+        )
+
+        # Flag region (inside the frame, above divider)
+        flag_region = (
+            inner_x0 + frame_border,
+            inner_y0 + frame_border,
+            inner_x1 - frame_border,
+            divider_y - 4
+        )
+
+        # Load and render flag image
         try:
             with Image.open(entry.png_path) as im:
                 flag = im.convert("RGB")
@@ -398,41 +406,23 @@ class WorldFlags(BasePlugin):
             fy = flag_region[1] + (fh - fitted.size[1]) // 2
             img.paste(fitted, (fx, fy))
 
-        # Info box
-        ix0, iy0, ix1, iy1 = info_region
-        box_w = max(10, ix1 - ix0)
-        box_h = max(10, iy1 - iy0)
-        radius = max(12, int(min(box_w, box_h) * 0.08))
+        # Info section (below divider, inside frame)
+        info_x0 = inner_x0 + frame_border
+        info_y0 = divider_y + 8
+        info_x1 = inner_x1 - frame_border
+        info_y1 = inner_y1 - frame_border
+        info_w = info_x1 - info_x0
+        info_h = info_y1 - info_y0
 
-        # Shadow
-        overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        od = ImageDraw.Draw(overlay)
-        shadow_off = max(3, int(min(w, h) * 0.012))
-        od.rounded_rectangle(
-            (ix0 + shadow_off, iy0 + shadow_off, ix1 + shadow_off, iy1 + shadow_off),
-            radius=radius,
-            fill=(0, 0, 0, 50),
-        )
-        od.rounded_rectangle(
-            (ix0, iy0, ix1, iy1),
-            radius=radius,
-            fill=(255, 255, 255, 235),
-            outline=(0, 0, 0, 120),
-            width=2,
-        )
-        img_rgba = img.convert("RGBA")
-        img_rgba.alpha_composite(overlay)
-        img = img_rgba.convert("RGB")
-        draw = ImageDraw.Draw(img)
-
-        title_font_size = max(20, int(min(w, h) * 0.065))
-        line_font_size = max(14, int(min(w, h) * 0.048))
+        # Font sizing
+        title_font_size = max(18, int(min(w, h) * 0.055))
+        line_font_size = max(13, int(min(w, h) * 0.042))
         title_font = self._font("Jost", title_font_size, bold=True)
         line_font = self._font("Jost", line_font_size, bold=False)
 
-        text_pad_x = max(10, int(line_font_size * 0.7))
-        text_pad_y = max(10, int(line_font_size * 0.7))
-        max_text_w = box_w - text_pad_x * 2
+        text_pad_x = max(8, int(line_font_size * 0.6))
+        text_pad_y = max(6, int(line_font_size * 0.5))
+        max_text_w = info_w - text_pad_x * 2
 
         def text_w(txt: str, font_obj: ImageFont.ImageFont) -> int:
             try:
@@ -460,15 +450,16 @@ class WorldFlags(BasePlugin):
                     hi = mid - 1
             return best
 
-        y = iy0 + text_pad_y
+        # Render info text
+        y = info_y0 + text_pad_y
         title = truncate(entry.title, title_font)
-        draw.text((ix0 + text_pad_x, y), title, font=title_font, fill=(0, 0, 0))
-        y += int(title_font_size * 1.30)
+        draw.text((info_x0 + text_pad_x, y), title, font=title_font, fill=(0, 0, 0))
+        y += int(title_font_size * 1.20)
 
         for line in entry.lines[:3]:
             line = truncate(line, line_font)
-            draw.text((ix0 + text_pad_x, y), line, font=line_font, fill=(0, 0, 0))
-            y += int(line_font_size * 1.35)
+            draw.text((info_x0 + text_pad_x, y), line, font=line_font, fill=(0, 0, 0))
+            y += int(line_font_size * 1.25)
 
         return img
 
